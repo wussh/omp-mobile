@@ -57,7 +57,7 @@ class ChatViewModel @Inject constructor(
                         -> {
                             sendingInFlight = false
                             _sendWarning.value =
-                                "Koneksi terputus setelah perintah dikirim. Perintah mungkin sudah dijalankan; periksa transcript setelah resync sebelum mengirim ulang."
+                                "Connection lost after the command was sent. It may already have run; check the transcript after resync before sending again."
                         }
 
                         else -> Unit
@@ -88,9 +88,9 @@ class ChatViewModel @Inject constructor(
                     _info.value = null
                 }
 
-                SendResult.NotConnected -> _info.value = "Belum terhubung; draft dipertahankan."
-                SendResult.ReadOnly -> _info.value = "Sesi View tidak dapat mengirim perintah."
-                SendResult.Rejected -> _info.value = "Perintah tidak dapat dikirim."
+                SendResult.NotConnected -> _info.value = "Not connected; draft kept."
+                SendResult.ReadOnly -> _info.value = "View sessions cannot send prompts."
+                SendResult.Rejected -> _info.value = "Prompt could not be sent."
             }
         }
     }
@@ -103,7 +103,7 @@ class ChatViewModel @Inject constructor(
                 SendResult.Queued -> Unit
                 else -> {
                     _interruptPending.value = false
-                    _info.value = "Interrupt tidak dapat dikirim."
+                    _info.value = "Interrupt could not be sent."
                 }
             }
         }
@@ -160,9 +160,9 @@ class ChatViewModel @Inject constructor(
     fun disconnect() = repository.disconnect()
 
     private fun responseError(result: SendResult): String = when (result) {
-        SendResult.NotConnected -> "Belum terhubung."
-        SendResult.ReadOnly -> "Sesi View tidak dapat menjawab."
-        SendResult.Rejected -> "Jawaban tidak dapat dikirim."
+        SendResult.NotConnected -> "Not connected."
+        SendResult.ReadOnly -> "View sessions cannot answer."
+        SendResult.Rejected -> "Response could not be sent."
         SendResult.Queued -> ""
     }
 }

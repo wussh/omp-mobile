@@ -1,5 +1,10 @@
 package dev.omp.mobile.ui.sessions
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,7 +19,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -54,54 +61,84 @@ fun SessionsScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Sessions", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    "Pairing tersimpan di perangkat ini; daftar ini bukan klaim host aktif.",
+                    "Sessions",
+                    style = MaterialTheme.typography.displaySmall,
+                )
+                Text(
+                    "Pairings are stored on this device; this list is not a claim that the host is active.",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            Button(onClick = onPairRequested) {
+            Button(
+                onClick = onPairRequested,
+                shape = CircleShape,
+            ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Spacer(Modifier.padding(2.dp))
                 Text("Pair")
             }
         }
 
-        session.storageError?.let { error ->
-            Card {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Kredensial tidak dapat dibuka", style = MaterialTheme.typography.titleSmall)
+        AnimatedVisibility(
+            visible = session.storageError != null,
+            enter = fadeIn() + expandVertically(),
+            exit = fadeOut() + shrinkVertically(),
+        ) {
+            val error = session.storageError.orEmpty()
+            Card(
+                shape = MaterialTheme.shapes.large,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Credentials could not be opened", style = MaterialTheme.typography.titleSmall)
                     Text(error, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
 
         if (pairings.isEmpty()) {
-            Card(Modifier.fillMaxWidth()) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.extraLargeIncreased,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                ),
+            ) {
                 Column(
                     Modifier
                         .fillMaxWidth()
-                        .padding(24.dp),
+                        .padding(28.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("Belum ada pairing")
+                    Text("No pairings yet")
                     Text(
-                        "Pindai QR atau tempel link dari host OMP.",
+                        "Scan a QR code or paste a link from the OMP host.",
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    Button(onClick = onPairRequested) { Text("Pindai QR / tempel link") }
+                    Button(onClick = onPairRequested, shape = CircleShape) { Text("Scan QR / paste link") }
                 }
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(pairings, key = { it.id }) { pairing ->
                     val selected = session.pairingId == pairing.id
-                    Card(Modifier.fillMaxWidth()) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().animateItem(),
+                        shape = MaterialTheme.shapes.largeIncreased,
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (selected) {
+                                MaterialTheme.colorScheme.primaryContainer
+                            } else {
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            },
+                        ),
+                    ) {
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(12.dp),
+                                .padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -119,7 +156,7 @@ fun SessionsScreen(
                             }
                             Text(pairing.relayHost, style = MaterialTheme.typography.bodySmall)
                             Text(
-                                if (selected) "Pairing terpilih" else "Pairing tersimpan",
+                                if (selected) "Selected pairing" else "Saved pairing",
                                 style = MaterialTheme.typography.labelSmall,
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -129,9 +166,10 @@ fun SessionsScreen(
                                         onOpenChat()
                                     },
                                     enabled = !selected,
-                                ) { Text(if (selected) "Aktif" else "Buka") }
-                                TextButton(onClick = { renameTarget = pairing }) { Text("Ganti label") }
-                                TextButton(onClick = { forgetTarget = pairing }) { Text("Hapus lokal") }
+                                    shape = CircleShape,
+                                ) { Text(if (selected) "Active" else "Open") }
+                                TextButton(onClick = { renameTarget = pairing }) { Text("Rename") }
+                                TextButton(onClick = { forgetTarget = pairing }) { Text("Delete local") }
                             }
                         }
                     }
@@ -144,7 +182,7 @@ fun SessionsScreen(
         var label by remember(pairing.id) { mutableStateOf(pairing.label) }
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("Ganti label") },
+            title = { Text("Rename pairing") },
             text = {
                 OutlinedTextField(
                     value = label,
@@ -161,10 +199,10 @@ fun SessionsScreen(
                         renameTarget = null
                     },
                     enabled = label.isNotBlank(),
-                ) { Text("Simpan") }
+                ) { Text("Save") }
             },
             dismissButton = {
-                TextButton(onClick = { renameTarget = null }) { Text("Batal") }
+                TextButton(onClick = { renameTarget = null }) { Text("Cancel") }
             },
         )
     }
@@ -172,18 +210,18 @@ fun SessionsScreen(
     forgetTarget?.let { pairing ->
         AlertDialog(
             onDismissRequest = { forgetTarget = null },
-            title = { Text("Hapus pairing lokal?") },
-            text = { Text("Socket ditutup dan kredensial dihapus. Host tidak dihentikan.") },
+            title = { Text("Delete local pairing?") },
+            text = { Text("The socket is closed and credentials are deleted. The host keeps running.") },
             confirmButton = {
                 TextButton(
                     onClick = {
                         viewModel.forget(pairing.id)
                         forgetTarget = null
                     },
-                ) { Text("Hapus") }
+                ) { Text("Delete") }
             },
             dismissButton = {
-                TextButton(onClick = { forgetTarget = null }) { Text("Batal") }
+                TextButton(onClick = { forgetTarget = null }) { Text("Cancel") }
             },
         )
     }

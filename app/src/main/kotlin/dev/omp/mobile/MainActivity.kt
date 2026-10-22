@@ -7,10 +7,19 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.ShortNavigationBar
+import androidx.compose.material3.ShortNavigationBarItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -25,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
@@ -39,10 +49,10 @@ import dev.omp.mobile.ui.settings.SettingsScreen
 import dev.omp.mobile.ui.settings.SettingsViewModel
 import dev.omp.mobile.ui.theme.OmpTheme
 
-private enum class MainTab(val label: String, val initial: String) {
-    SESSIONS("Sessions", "S"),
-    CHAT("Chat", "C"),
-    SETTINGS("Settings", "S"),
+private enum class MainTab(val label: String, val icon: Int) {
+    SESSIONS("Sessions", R.drawable.ic_sessions),
+    CHAT("Chat", R.drawable.ic_chat),
+    SETTINGS("Settings", R.drawable.ic_settings),
 }
 
 @AndroidEntryPoint
@@ -66,6 +76,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 private fun OmpApp(
     sessionsViewModel: SessionsViewModel,
@@ -131,20 +142,35 @@ private fun OmpApp(
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                NavigationBar {
+                ShortNavigationBar {
                     MainTab.values().forEach { item ->
-                        NavigationBarItem(
+                        ShortNavigationBarItem(
                             selected = tab == item,
                             onClick = { tabName = item.name },
-                            icon = { Text(item.initial) },
+                            icon = {
+                                Icon(
+                                    painter = painterResource(item.icon),
+                                    contentDescription = null,
+                                )
+                            },
                             label = { Text(item.label) },
                         )
                     }
                 }
             },
         ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
-                when (tab) {
+            AnimatedContent(
+                targetState = tab,
+                modifier = Modifier.fillMaxSize().padding(padding),
+                transitionSpec = {
+                    val forward = targetState.ordinal >= initialState.ordinal
+                    val direction = if (forward) 1 else -1
+                    (fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 8 * direction }) togetherWith
+                        (fadeOut(tween(120)) + slideOutHorizontally(tween(180)) { -it / 10 * direction })
+                },
+                label = "main-tab",
+            ) { currentTab ->
+                when (currentTab) {
                     MainTab.SESSIONS -> SessionsScreen(
                         viewModel = sessionsViewModel,
                         onPairRequested = {
@@ -174,23 +200,23 @@ private fun OmpApp(
                     pendingError = null
                 }
             },
-            title = { Text("Simpan pairing?") },
+            title = { Text("Save pairing?") },
             text = {
                 androidx.compose.foundation.layout.Column(
                     verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(6.dp),
                 ) {
                     Text("Relay: ${credentials.relayOrigin.removePrefix("wss://").removePrefix("ws://")}")
                     Text("Room: ${credentials.roomId}")
-                    Text("Akses: ${if (credentials.hasWriteToken) "Control" else "View"}")
+                    Text("Access: ${if (credentials.hasWriteToken) "Control" else "View"}")
                     Text(
-                        "Kredensial akan disimpan terenkripsi di perangkat. Label kosong memakai label default.",
+                        "Credentials will be stored encrypted on this device. An empty label uses the default.",
                         style = MaterialTheme.typography.bodySmall,
                     )
                     OutlinedTextField(
                         value = pendingLabel,
                         onValueChange = { pendingLabel = it.take(64) },
                         singleLine = true,
-                        label = { Text("Label (opsional)") },
+                        label = { Text("Label (optional)") },
                     )
                     pendingError?.let {
                         Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
@@ -207,7 +233,7 @@ private fun OmpApp(
                         )
                     },
                     enabled = !saving,
-                ) { Text(if (saving) "Menyimpan…" else "Simpan & hubungkan") }
+                ) { Text(if (saving) "Saving…" else "Save & connect") }
             },
             dismissButton = {
                 TextButton(
@@ -216,7 +242,7 @@ private fun OmpApp(
                         pendingError = null
                     },
                     enabled = !saving,
-                ) { Text("Batal") }
+                ) { Text("Cancel") }
             },
         )
     }

@@ -1,6 +1,14 @@
 package dev.omp.mobile.ui.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,7 +17,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -18,7 +25,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.KeyboardArrowDown
@@ -26,9 +33,12 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -37,7 +47,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -45,9 +54,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.omp.mobile.R
 import dev.omp.mobile.collab.ActiveTool
 import dev.omp.mobile.collab.BranchSummaryEntry
 import dev.omp.mobile.collab.CollabUiRequest
@@ -61,7 +72,6 @@ import dev.omp.mobile.collab.SessionEntry
 import dev.omp.mobile.collab.ThinkingLevelChangeEntry
 import dev.omp.mobile.collab.UnknownEntry
 import dev.omp.mobile.collab.WireMessage
-import kotlinx.coroutines.flow.collect
 import java.util.Locale
 
 @Composable
@@ -121,21 +131,37 @@ fun ChatScreen(
                 onStop = viewModel::disconnect,
                 onOpenSessions = onOpenSessions,
             )
-            warning?.let {
-                Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-                    Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                        TextButton(onClick = viewModel::dismissSendWarning) { Text("Tutup") }
+            AnimatedVisibility(
+                visible = warning != null,
+                enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+                exit = fadeOut(tween(120)) + shrinkVertically(tween(180)),
+            ) {
+                val message = warning.orEmpty()
+                Card(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                        TextButton(onClick = viewModel::dismissSendWarning) { Text("Dismiss") }
                     }
                 }
             }
-            info?.let {
+            AnimatedVisibility(
+                visible = info != null,
+                enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+                exit = fadeOut(tween(120)) + shrinkVertically(tween(180)),
+            ) {
+                val message = info.orEmpty()
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(it, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = viewModel::clearInfo) { Text("Tutup") }
+                    Text(message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+                    TextButton(onClick = viewModel::clearInfo) { Text("Dismiss") }
                 }
             }
 
@@ -149,28 +175,35 @@ fun ChatScreen(
                     item("empty") {
                         Column(Modifier.fillMaxWidth().padding(32.dp)) {
                             Text(
-                                if (session.status is ConnectionStatus.Syncing) "Menyinkronkan transcript…" else "Belum ada aktivitas",
+                                if (session.status is ConnectionStatus.Syncing) "Syncing transcript…" else "No activity yet",
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                     }
                 }
                 items(entries, key = { it.id }) { entry ->
-                    JournalRow(entry, replica.toolResults, replica.activeTools)
+                    Box(Modifier.animateItem()) {
+                        JournalRow(entry, replica.toolResults, replica.activeTools)
+                    }
                 }
                 if (hasStream) {
                     item(key = "stream-ghost") {
-                        AssistantRow(
-                            message = replica.stream!!,
-                            results = replica.toolResults,
-                            active = replica.activeTools,
-                            pending = !replica.streamDone,
-                        )
+                        Box(Modifier.animateItem()) {
+                            AssistantRow(
+                                message = replica.stream!!,
+                                results = replica.toolResults,
+                                active = replica.activeTools,
+                                pending = !replica.streamDone,
+                            )
+                        }
                     }
                 }
                 if (tailTools.isNotEmpty()) {
                     item(key = "active-tools") {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Column(
+                            Modifier.animateItem(),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                             tailTools.forEach { tool ->
                                 ToolCard(
                                     toolCallId = tool.toolCallId,
@@ -187,7 +220,14 @@ fun ChatScreen(
                 }
                 if (showWorking) {
                     item(key = "working") {
-                        Text("thinking…", style = MaterialTheme.typography.bodySmall)
+                        Row(
+                            Modifier.animateItem().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ActivityIndicator(Modifier.size(18.dp))
+                            Text("thinking…", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
@@ -197,7 +237,7 @@ fun ChatScreen(
                     onClick = { followTail = true },
                     modifier = Modifier.align(Alignment.End).padding(end = 16.dp, bottom = 8.dp),
                 ) {
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Kembali ke terbaru")
+                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Back to latest")
                 }
             }
 
@@ -246,8 +286,8 @@ private fun Header(session: dev.omp.mobile.data.CollabSessionState) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
+                style = MaterialTheme.typography.headlineSmall,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
@@ -268,17 +308,19 @@ private fun Header(session: dev.omp.mobile.data.CollabSessionState) {
                 Text(String.format(Locale.US, "ctx %.0f%%", it), style = MaterialTheme.typography.bodySmall)
             }
             state?.queuedMessageCount?.takeIf { it > 0 }?.let {
-                Text("antrean $it", style = MaterialTheme.typography.bodySmall)
+                Text("queued $it", style = MaterialTheme.typography.bodySmall)
+            }
+            if (session.status == ConnectionStatus.Connected) {
+                Text("Connected", style = MaterialTheme.typography.labelSmall)
             }
         }
         val subs = replica.agents.filter { it.kind == "sub" }
         if (subs.isNotEmpty()) {
             Text(
-                "subagent: ${subs.size} (${subs.count { it.status == "running" }} berjalan)",
+                "subagents: ${subs.size} (${subs.count { it.status == "running" }} running)",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        Text(statusLabel(session.status), style = MaterialTheme.typography.labelMedium)
     }
 }
 
@@ -291,39 +333,58 @@ private fun ConnectionBanner(
 ) {
     val status = session.status
     val text = when (status) {
-        ConnectionStatus.Connecting -> "Menyambungkan…"
-        is ConnectionStatus.Syncing -> "Menyinkronkan ${status.received}/${status.total}…"
-        ConnectionStatus.Connected -> return
-        is ConnectionStatus.Reconnecting -> "Menyambungkan kembali (percobaan ${status.attempt})…"
-        ConnectionStatus.WaitingForNetwork -> "Menunggu jaringan…"
-        ConnectionStatus.Paused -> "Dijeda saat aplikasi di latar. Buka lagi untuk menyambung."
-        ConnectionStatus.Idle -> "Belum terhubung."
-        is ConnectionStatus.Ended -> "Sesi berakhir: ${status.reason}"
-        is ConnectionStatus.Failed -> "Gagal: ${status.message}"
+        ConnectionStatus.Connecting -> "Connecting…"
+        is ConnectionStatus.Syncing -> "Syncing ${status.received}/${status.total}…"
+        ConnectionStatus.Connected -> ""
+        is ConnectionStatus.Reconnecting -> "Reconnecting (attempt ${status.attempt})…"
+        ConnectionStatus.WaitingForNetwork -> "Waiting for network…"
+        ConnectionStatus.Paused -> "Paused while the app is in the background. Reopen it to reconnect."
+        ConnectionStatus.Idle -> "Not connected."
+        is ConnectionStatus.Ended -> "Session ended: ${status.reason}"
+        is ConnectionStatus.Failed -> "Failed: ${status.message}"
     }
-    Card(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(8.dp),
+    AnimatedVisibility(
+        visible = status != ConnectionStatus.Connected,
+        enter = fadeIn(tween(180)) + expandVertically(tween(220)),
+        exit = fadeOut(tween(120)) + shrinkVertically(tween(180)),
     ) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(text, style = MaterialTheme.typography.bodySmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                when (status) {
-                    is ConnectionStatus.Failed, is ConnectionStatus.Ended, ConnectionStatus.Idle -> {
-                        FilledTonalButton(onClick = onRetry) { Text("Coba lagi") }
-                        TextButton(onClick = onOpenSessions) { Text("Pair ulang") }
-                    }
+        Card(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+            shape = MaterialTheme.shapes.largeIncreased,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ),
+        ) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (status.isActive()) ActivityIndicator(Modifier.size(18.dp))
+                    AnimatedContent(
+                        targetState = text,
+                        transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+                        label = "connection-status",
+                    ) { label -> Text(label, style = MaterialTheme.typography.bodyMedium) }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when (status) {
+                        is ConnectionStatus.Failed, is ConnectionStatus.Ended, ConnectionStatus.Idle -> {
+                            FilledTonalButton(onClick = onRetry, shape = CircleShape) { Text("Retry") }
+                            TextButton(onClick = onOpenSessions) { Text("Pair again") }
+                        }
 
-                    is ConnectionStatus.Reconnecting -> {
-                        TextButton(onClick = onStop) { Text("Berhenti menyambung") }
-                        TextButton(onClick = onOpenSessions) { Text("Pair ulang") }
-                    }
+                        is ConnectionStatus.Reconnecting -> {
+                            TextButton(onClick = onStop) { Text("Stop reconnecting") }
+                            TextButton(onClick = onOpenSessions) { Text("Pair again") }
+                        }
 
-                    ConnectionStatus.WaitingForNetwork, ConnectionStatus.Paused -> {
-                        TextButton(onClick = onOpenSessions) { Text("Pair ulang") }
-                    }
+                        ConnectionStatus.WaitingForNetwork, ConnectionStatus.Paused -> {
+                            TextButton(onClick = onOpenSessions) { Text("Pair again") }
+                        }
 
-                    else -> Unit
+                        else -> Unit
+                    }
                 }
             }
         }
@@ -352,9 +413,9 @@ private fun Composer(
         if (!session.canMutate) {
             Text(
                 when {
-                    session.readOnly || !session.hasWriteToken -> "Sesi View: hanya membaca transcript."
-                    session.status is ConnectionStatus.Connected -> "Tidak dapat mengirim."
-                    else -> "Composer aktif setelah snapshot selesai."
+                    session.readOnly || !session.hasWriteToken -> "View session: read-only transcript."
+                    session.status is ConnectionStatus.Connected -> "Sending is unavailable."
+                    else -> "The composer unlocks after the snapshot completes."
                 },
                 style = MaterialTheme.typography.labelSmall,
             )
@@ -364,35 +425,44 @@ private fun Composer(
                 value = draft,
                 onValueChange = onDraft,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Pesan untuk host…") },
+                placeholder = { Text("Message the host…") },
                 enabled = session.canMutate,
                 minLines = 1,
                 maxLines = 6,
+                shape = MaterialTheme.shapes.extraLarge,
             )
             Button(
                 onClick = onSend,
                 enabled = session.canMutate && draft.isNotBlank(),
                 modifier = Modifier.size(52.dp),
+                shape = CircleShape,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
             ) {
-                Text("Kirim")
+                Icon(
+                    painter = painterResource(R.drawable.ic_send),
+                    contentDescription = "Send prompt",
+                )
             }
             if (busy && session.canMutate) {
                 FilledTonalButton(
                     onClick = onInterrupt,
                     enabled = !interruptPending,
                     modifier = Modifier.size(52.dp),
+                    shape = CircleShape,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                 ) {
-                    Text("Stop")
+                    Icon(
+                        painter = painterResource(R.drawable.ic_stop),
+                        contentDescription = "Stop the agent",
+                    )
                 }
             }
         }
         if (interruptPending) {
-            Text("Menunggu host berhenti…", style = MaterialTheme.typography.labelSmall)
+            Text("Waiting for the host to stop…", style = MaterialTheme.typography.labelSmall)
         }
         Text(
-            "Foreground saja. Prompt tanpa ACK: periksa transcript setelah resync sebelum mengirim ulang.",
+            "Foreground only. Prompts have no ACK: check the transcript after resync before sending again.",
             style = MaterialTheme.typography.labelSmall,
         )
     }
@@ -435,7 +505,7 @@ private fun SelectRequestDialog(
                         TextButton(
                             onClick = { onSelect(option.label) },
                             enabled = !answered,
-                        ) { Text("Pilih") }
+                        ) { Text("Select") }
                     }
                 }
             }
@@ -466,29 +536,29 @@ private fun EditorRequestDialog(
             )
         },
         confirmButton = {
-            TextButton(onClick = { onSubmit(text) }, enabled = !answered) { Text("Kirim") }
+            TextButton(onClick = { onSubmit(text) }, enabled = !answered) { Text("Send") }
         },
         dismissButton = {
-            TextButton(onClick = onCancel, enabled = !answered) { Text("Batal") }
+            TextButton(onClick = onCancel, enabled = !answered) { Text("Cancel") }
         },
     )
 }
+
+@OptIn(ExperimentalMaterial3ExpressiveApi::class)
+@Composable
+private fun ActivityIndicator(modifier: Modifier = Modifier) {
+    LoadingIndicator(modifier)
+}
+
+private fun ConnectionStatus.isActive(): Boolean =
+    this is ConnectionStatus.Connecting ||
+        this is ConnectionStatus.Syncing ||
+        this is ConnectionStatus.Reconnecting ||
+        this is ConnectionStatus.WaitingForNetwork
 
 private fun SessionEntry.isRenderable(): Boolean = when (this) {
     is MessageEntry -> message is WireMessage.User || message is WireMessage.Assistant
     is CustomMessageEntry -> customType == "collab-prompt" || display
     is CompactionEntry, is BranchSummaryEntry, is ModelChangeEntry, is ThinkingLevelChangeEntry -> true
     is UnknownEntry -> false
-}
-
-private fun statusLabel(status: ConnectionStatus): String = when (status) {
-    ConnectionStatus.Idle -> "Status: belum terhubung"
-    ConnectionStatus.Connecting -> "Status: menyambungkan"
-    is ConnectionStatus.Syncing -> "Status: sinkronisasi ${status.received}/${status.total}"
-    ConnectionStatus.Connected -> "Status: tersambung"
-    is ConnectionStatus.Reconnecting -> "Status: menyambungkan kembali (${status.attempt})"
-    ConnectionStatus.WaitingForNetwork -> "Status: menunggu jaringan"
-    ConnectionStatus.Paused -> "Status: dijeda"
-    is ConnectionStatus.Ended -> "Status: berakhir"
-    is ConnectionStatus.Failed -> "Status: gagal"
 }

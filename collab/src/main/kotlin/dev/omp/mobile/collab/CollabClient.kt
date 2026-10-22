@@ -202,7 +202,7 @@ class CollabClient(
         val cipher = try {
             RoomCipher.fromKey(credentials.key)
         } catch (e: IllegalArgumentException) {
-            fail(FailureKind.INVALID_KEY, "Kunci sesi tidak valid")
+            fail(FailureKind.INVALID_KEY, "Invalid session key")
             return
         }
         val previous = active?.credentials
@@ -332,7 +332,7 @@ class CollabClient(
         cancelRetryTimer()
         if (status !is ConnectionStatus.Connected) {
             status = if (attemptCounter == 0) ConnectionStatus.Connecting
-            else ConnectionStatus.Reconnecting(attemptCounter, 0, "Menyambungkan")
+            else ConnectionStatus.Reconnecting(attemptCounter, 0, "Connecting")
         }
         val listener = object : TransportListener {
             override fun onOpen() {
@@ -362,7 +362,7 @@ class CollabClient(
         currentSocket = try {
             transportFactory.create(current.credentials.wsUrl, listener)
         } catch (e: Exception) {
-            scheduleRetry("Gagal membuka koneksi")
+            scheduleRetry("Failed to open connection")
             return
         }
     }
@@ -376,7 +376,7 @@ class CollabClient(
         val sent = runCatching { sendEncrypted(current, hello) }.getOrDefault(false)
         if (!sent) {
             invalidateSocket()
-            scheduleRetry("Gagal mengirim hello")
+            scheduleRetry("Failed to send hello")
             return
         }
         val activation = activationId
@@ -397,13 +397,13 @@ class CollabClient(
         val text = try {
             current.cipher.open(envelope.payload)
         } catch (e: Exception) {
-            fail(FailureKind.PROTOCOL_ERROR, "Frame sesi tidak dapat dibuka")
+            fail(FailureKind.PROTOCOL_ERROR, "Session frame could not be opened")
             return
         }
         val frame = try {
             parseHostFrame(text)
         } catch (e: WireFormatException) {
-            fail(FailureKind.PROTOCOL_ERROR, "Frame sesi tidak valid")
+            fail(FailureKind.PROTOCOL_ERROR, "Invalid session frame")
             return
         }
         handleFrame(frame)
@@ -416,7 +416,7 @@ class CollabClient(
             // Hint only: tear down and let the close path decide whether the
             // session may recover. It does not prove the session ended.
             invalidateSocket()
-            scheduleRetry("Room ditutup sementara")
+            scheduleRetry("Room closed temporarily")
         }
     }
 
@@ -486,7 +486,7 @@ class CollabClient(
         if (frame.proto != COLLAB_PROTO) {
             fail(
                 FailureKind.PROTOCOL_MISMATCH,
-                "Host memakai protokol ${frame.proto}; aplikasi memerlukan versi 3",
+                "Host uses protocol ${frame.proto}; this app requires version 3",
             )
             return
         }
@@ -521,14 +521,14 @@ class CollabClient(
         if (activation != activationId || attempt != attemptId || token != welcomeToken) return
         if (welcomed) return
         invalidateSocket()
-        scheduleRetry("Host belum merespons")
+        scheduleRetry("Host did not respond")
     }
 
     private fun onProgressTimeout(activation: Long, attempt: Long, token: Long) {
         if (activation != activationId || attempt != attemptId || token != progressToken) return
         if (replica.snapshot().loading == null) return
         invalidateSocket()
-        scheduleRetry("Host belum mengirim snapshot")
+        scheduleRetry("Host did not send the snapshot")
     }
 
     private fun onClosed(id: Long, code: Int, reason: String) {
@@ -546,30 +546,30 @@ class CollabClient(
         when (code) {
             4001 -> {
                 roomRecovery = true
-                scheduleRetry("Room sedang dibuat ulang")
+                scheduleRetry("Room is being recreated")
             }
 
             4004 -> if (everWelcomed || roomRecovery) {
-                scheduleRetry("Room belum tersedia")
+                scheduleRetry("Room is not available yet")
             } else {
                 fail(
                     FailureKind.ROOM_NOT_FOUND,
-                    "Room tidak ditemukan; pair ulang atau coba lagi setelah host siap",
+                    "Room not found; pair again or retry after the host is ready",
                 )
             }
 
             4009, 4029 -> fail(
                 FailureKind.JOIN_REJECTED,
-                if (code == 4029) "Room penuh" else "Host lain sudah terhubung ke room ini",
+                if (code == 4029) "Room is full" else "Another host is already connected to this room",
             )
 
-            else -> scheduleRetry(reason.ifBlank { "Koneksi terputus" })
+            else -> scheduleRetry(reason.ifBlank { "Connection lost" })
         }
     }
 
     private fun onFailure(id: Long, error: Throwable) {
         if (id != attemptId) return
-        onClosed(id, 1006, "Koneksi terputus")
+        onClosed(id, 1006, "Connection lost")
     }
 
     private fun scheduleRetry(message: String) {

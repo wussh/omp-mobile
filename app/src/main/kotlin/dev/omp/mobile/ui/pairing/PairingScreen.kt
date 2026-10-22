@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
@@ -12,6 +13,11 @@ import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -19,29 +25,37 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LargeFlexibleTopAppBar
+import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -58,13 +72,16 @@ import com.google.mlkit.vision.common.InputImage
 import dev.omp.mobile.collab.PairingCredentials
 import dev.omp.mobile.collab.PairingParseResult
 import dev.omp.mobile.collab.parseCollabLink
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.concurrent.Executors
 
 /**
  * QR/paste pairing. Both paths use the same parser. The screen returns only
  * parsed credentials; the raw link is never retained after a valid parse.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.material3.ExperimentalMaterial3ExpressiveApi::class)
 @Composable
 fun PairingScreen(
     onClose: () -> Unit,
@@ -79,9 +96,69 @@ fun PairingScreen(
     }
     var error by remember { mutableStateOf<String?>(null) }
     var handled by remember { mutableStateOf(false) }
+    var scanningImage by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val currentOnParsed by rememberUpdatedState(onParsed)
+    val scanner: BarcodeScanner = remember {
+        BarcodeScanning.getClient(
+            BarcodeScannerOptions.Builder()
+                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                .build(),
+        )
+    }
+
+    fun acceptRaw(raw: String) {
+        if (handled) return
+        when (val parsed = parseCollabLink(raw)) {
+            is PairingParseResult.Valid -> {
+                handled = true
+                error = null
+                currentOnParsed(parsed.credentials)
+            }
+
+            is PairingParseResult.Invalid -> error = parsed.error.message
+        }
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> hasPermission = granted }
+
+    val imageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scanningImage = true
+        error = null
+        scope.launch {
+            val input = withContext(Dispatchers.IO) {
+                runCatching { InputImage.fromFilePath(context, uri) }.getOrNull()
+            }
+            if (input == null) {
+                error = "Could not read the selected image."
+                scanningImage = false
+                return@launch
+            }
+            scanner.process(input)
+                .addOnSuccessListener { barcodes ->
+                    val raw = barcodes.firstOrNull { it.rawValue != null }?.rawValue
+                    if (raw == null) {
+                        error = "No QR code found in the selected image."
+                    } else {
+                        acceptRaw(raw)
+                    }
+                    scanningImage = false
+                }
+                .addOnFailureListener {
+                    error = "Could not scan the selected image."
+                    scanningImage = false
+                }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose { scanner.close() }
+    }
 
     LaunchedEffect(Unit) {
         if (!hasPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
@@ -90,11 +167,11 @@ fun PairingScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = { Text("Pairing") },
+            LargeFlexibleTopAppBar(
+                title = { Text("Pair") },
                 navigationIcon = {
                     IconButton(onClick = onClose) {
-                        Icon(Icons.Filled.Close, contentDescription = "Tutup pairing")
+                        Icon(Icons.Filled.Close, contentDescription = "Close pairing")
                     }
                 },
             )
@@ -111,49 +188,75 @@ fun PairingScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text(
-                "Pindai QR Control atau View dari host, atau tempel link pairing.",
+                "Scan a Control or View QR code with the camera, pick a QR image, or paste a pairing link.",
                 style = MaterialTheme.typography.bodyMedium,
             )
             when {
                 hasPermission -> {
-                    CameraScanner(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(280.dp),
-                        onQr = { raw ->
-                            if (handled) return@CameraScanner
-                            when (val parsed = parseCollabLink(raw)) {
-                                is PairingParseResult.Valid -> {
-                                    handled = true
-                                    error = null
-                                    onParsed(parsed.credentials)
-                                }
-
-                                is PairingParseResult.Invalid -> error = parsed.error.message
-                            }
-                        },
-                    )
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.extraLargeIncreased,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ),
+                    ) {
+                        CameraScanner(
+                            scanner = scanner,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(260.dp),
+                            onQr = { raw -> acceptRaw(raw) },
+                        )
+                    }
                 }
 
                 else -> {
-                    Text("Izin kamera ditolak atau tidak tersedia. Tempel link tetap dapat digunakan.")
-                    Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
-                        Text("Minta izin kamera")
+                    Text("Camera permission was denied or no camera is available. Pasting a link still works.")
+                    Button(
+                        onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                        shape = CircleShape,
+                    ) {
+                        Text("Request camera permission")
                     }
                 }
+            }
+
+            OutlinedButton(
+                onClick = {
+                    imageLauncher.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                enabled = !scanningImage,
+                modifier = Modifier.fillMaxWidth(),
+                shape = CircleShape,
+            ) {
+                if (scanningImage) {
+                    LoadingIndicator(Modifier.size(18.dp))
+                    Spacer(Modifier.padding(4.dp))
+                }
+                Text(if (scanningImage) "Scanning image…" else "Scan QR from image")
             }
 
             PasteLink(
                 onParsed = { credentials ->
                     handled = true
                     error = null
-                    onParsed(credentials)
+                    currentOnParsed(credentials)
                 },
                 onError = { error = it },
             )
 
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            AnimatedVisibility(
+                visible = error != null,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically(),
+            ) {
+                Text(
+                    error.orEmpty(),
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
     }
@@ -173,9 +276,10 @@ private fun PasteLink(
             value = text,
             onValueChange = { text = it },
             modifier = Modifier.weight(1f),
-            label = { Text("Link pairing") },
+            label = { Text("Pairing link") },
             singleLine = false,
             maxLines = 3,
+            shape = MaterialTheme.shapes.extraLarge,
         )
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Button(
@@ -190,34 +294,27 @@ private fun PasteLink(
                     }
                 },
                 enabled = text.isNotBlank(),
-            ) { Text("Tempel") }
-            TextButton(onClick = { text = "" }) { Text("Bersihkan") }
+                shape = CircleShape,
+            ) { Text("Paste") }
+            TextButton(onClick = { text = "" }) { Text("Clear") }
         }
     }
 }
 
 @Composable
 private fun CameraScanner(
+    scanner: BarcodeScanner,
     modifier: Modifier,
     onQr: (String) -> Unit,
 ) {
-    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnQr by rememberUpdatedState(onQr)
-    val scanner: BarcodeScanner = remember {
-        BarcodeScanning.getClient(
-            BarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                .build(),
-        )
-    }
     val executor = remember { Executors.newSingleThreadExecutor() }
     var provider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
             provider?.unbindAll()
-            scanner.close()
             executor.shutdown()
         }
     }

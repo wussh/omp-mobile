@@ -37,7 +37,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 const val CREDENTIAL_RECOVERY_MESSAGE =
-    "Kredensial tidak dapat dibuka; hapus data aplikasi melalui Pengaturan Android lalu pair ulang"
+    "Credentials could not be opened; clear app data in Android Settings, then pair again"
 
 enum class ThemeMode {
     SYSTEM,
@@ -198,7 +198,7 @@ class PairingStore @VisibleForTesting constructor(
             is StoreResult.Error -> result
             is StoreResult.Ok -> {
                 val pairing = result.value.firstOrNull { it.id == id }
-                    ?: return@withContext StoreResult.Error("Pairing tidak ditemukan")
+                    ?: return@withContext StoreResult.Error("Pairing not found")
                 pairing.toCredentials()?.let { StoreResult.Ok(it) } ?: StoreResult.Error()
             }
         }

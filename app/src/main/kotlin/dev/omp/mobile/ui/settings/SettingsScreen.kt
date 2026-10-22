@@ -2,25 +2,27 @@ package dev.omp.mobile.ui.settings
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -43,11 +45,11 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Settings", style = MaterialTheme.typography.headlineSmall)
+        Text("Settings", style = MaterialTheme.typography.displaySmall)
 
         Text("Nickname", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Dipakai saat join berikutnya. Kosong berarti ${PairingStore.DEFAULT_NICKNAME}.",
+            "Used on the next join. An empty value means ${PairingStore.DEFAULT_NICKNAME}.",
             style = MaterialTheme.typography.bodySmall,
         )
         OutlinedTextField(
@@ -55,10 +57,11 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             onValueChange = { edit = it.take(PairingStore.MAX_NICKNAME + 1) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Nickname (maks ${PairingStore.MAX_NICKNAME})") },
+            label = { Text("Nickname (max ${PairingStore.MAX_NICKNAME})") },
             isError = tooLong,
+            shape = MaterialTheme.shapes.extraLarge,
             supportingText = if (tooLong) {
-                { Text("Maksimum ${PairingStore.MAX_NICKNAME} karakter") }
+                { Text("Maximum ${PairingStore.MAX_NICKNAME} characters") }
             } else {
                 null
             },
@@ -66,47 +69,57 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
         Button(
             onClick = { viewModel.saveNickname(edit.trim()) },
             enabled = changed && !tooLong,
-        ) { Text("Simpan nickname") }
+            shape = CircleShape,
+        ) { Text("Save nickname") }
 
         HorizontalDivider()
 
         Text("Theme", style = MaterialTheme.typography.titleMedium)
-        ThemeMode.values().forEach { mode ->
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .selectable(selected = theme == mode, onClick = { viewModel.saveTheme(mode) })
-                    .padding(vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = theme == mode, onClick = null)
-                Text(
-                    when (mode) {
-                        ThemeMode.SYSTEM -> "System"
-                        ThemeMode.LIGHT -> "Light"
-                        ThemeMode.DARK -> "Dark"
-                    },
-                    modifier = Modifier.padding(start = 8.dp),
-                )
+        val modes = ThemeMode.values()
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            modes.forEachIndexed { index, mode ->
+                SegmentedButton(
+                    selected = theme == mode,
+                    onClick = { viewModel.saveTheme(mode) },
+                    shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                ) {
+                    Text(
+                        when (mode) {
+                            ThemeMode.SYSTEM -> "System"
+                            ThemeMode.LIGHT -> "Light"
+                            ThemeMode.DARK -> "Dark"
+                        },
+                    )
+                }
             }
         }
 
         HorizontalDivider()
 
-        Text("Tentang", style = MaterialTheme.typography.titleMedium)
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = MaterialTheme.shapes.largeIncreased,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            ),
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("About", style = MaterialTheme.typography.titleMedium)
         Text("OMP Mobile ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyMedium)
         Text("Wire protocol 3", style = MaterialTheme.typography.bodyMedium)
         Text(
-            "Baseline kontrak: can1357/oh-my-pi @ 0b5c27ab (COLLAB_PROTO 3, room key 32 byte, write token 16 byte).",
+            "Contract baseline: can1357/oh-my-pi @ 0b5c27ab (COLLAB_PROTO 3, 32-byte room key, 16-byte write token).",
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Koneksi hanya berjalan saat aplikasi di foreground. Tidak ada background service, gateway, cache offline, biometric, atau discovery room.",
+            "Connections run only while the app is in the foreground. There is no background service, gateway, offline cache, biometrics, or room discovery.",
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Transcript disimpan di memori; pairing dan token disimpan terenkripsi di noBackupFilesDir.",
+            "The transcript is held in memory; pairings and tokens are stored encrypted in noBackupFilesDir.",
             style = MaterialTheme.typography.bodySmall,
         )
+            }
+        }
     }
 }

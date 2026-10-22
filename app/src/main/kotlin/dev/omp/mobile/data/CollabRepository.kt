@@ -195,7 +195,7 @@ class DefaultCollabRepository @Inject constructor(
         if (parsed is PairingParseResult.Invalid) return PairingResult.Invalid(parsed.error.message)
         val credentials = (parsed as PairingParseResult.Valid).credentials
         if (!transportAllowed(credentials.relayOrigin)) {
-            return PairingResult.Invalid("Build release hanya menghubungkan relay wss://")
+            return PairingResult.Invalid("Release builds only connect over wss://")
         }
         val current = store.storedPairings()
         if (current is StoreResult.Error) return PairingResult.StorageError(current.message)
@@ -233,7 +233,7 @@ class DefaultCollabRepository @Inject constructor(
 
     override suspend fun select(id: String) {
         if (stored.none { it.id == id }) {
-            publishNotice("Pairing tidak ditemukan")
+            publishNotice("Pairing not found")
             return
         }
         selectInternal(id, persist = true)
@@ -248,7 +248,7 @@ class DefaultCollabRepository @Inject constructor(
             return
         }
         if (!transportAllowed(credentials.relayOrigin)) {
-            publishNotice("Build release hanya menghubungkan relay wss://")
+            publishNotice("Release builds only connect over wss://")
             return
         }
         selectedId = id
@@ -262,7 +262,7 @@ class DefaultCollabRepository @Inject constructor(
     override suspend fun rename(id: String, label: String) {
         val trimmed = label.trim()
         if (trimmed.isEmpty()) {
-            publishNotice("Label tidak boleh kosong")
+            publishNotice("Label cannot be empty")
             return
         }
         val list = stored.toMutableList()
@@ -306,7 +306,7 @@ class DefaultCollabRepository @Inject constructor(
             return
         }
         if (!transportAllowed(credentials.relayOrigin)) {
-            publishNotice("Build release hanya menghubungkan relay wss://")
+            publishNotice("Release builds only connect over wss://")
             return
         }
         autoConnectWanted = true
@@ -352,7 +352,7 @@ class DefaultCollabRepository @Inject constructor(
 
     private fun defaultLabel(credentials: PairingCredentials): String {
         val host = credentials.relayOrigin.removePrefix("wss://").removePrefix("ws://")
-        return "Sesi $host / ${credentials.roomId.take(6)}"
+        return "Session $host / ${credentials.roomId.take(6)}"
     }
 
     private fun transportAllowed(origin: String): Boolean =
@@ -363,7 +363,7 @@ class DefaultCollabRepository @Inject constructor(
         val target = stored.firstOrNull { it.id == selectedId } ?: return
         val credentials = target.toCredentials() ?: return
         if (!transportAllowed(credentials.relayOrigin)) {
-            publishNotice("Build release hanya menghubungkan relay wss://")
+            publishNotice("Release builds only connect over wss://")
             return
         }
         when (client.state.value.status) {

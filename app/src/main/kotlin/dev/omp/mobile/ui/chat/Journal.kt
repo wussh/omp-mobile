@@ -2,6 +2,11 @@ package dev.omp.mobile.ui.chat
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -11,7 +16,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
@@ -87,7 +91,7 @@ fun JournalRow(
             }
         }
 
-        is CompactionEntry -> MarkerDivider("Konteks dipadatkan · ${entry.tokensBefore} token")
+        is CompactionEntry -> MarkerDivider("Context compacted · ${entry.tokensBefore} tokens")
         is BranchSummaryEntry -> MarkerDivider("Branch summary")
         is ModelChangeEntry -> MarkerText("model → ${entry.model}")
         is ThinkingLevelChangeEntry -> MarkerText("thinking → ${entry.thinkingLevel ?: "off"}")
@@ -190,9 +194,13 @@ private fun ThinkingBlock(text: String, redacted: Boolean) {
         TextButton(onClick = { expanded = !expanded }) {
             Text(if (redacted) "thinking · redacted" else "thinking")
         }
-        if (expanded) {
+        AnimatedVisibility(
+            visible = expanded,
+            enter = fadeIn() + expandVertically(),
+            exit = shrinkVertically(),
+        ) {
             Text(
-                if (redacted) "(disembunyikan oleh provider)" else text,
+                if (redacted) "(redacted by provider)" else text,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = 12.dp),
             )
@@ -207,11 +215,11 @@ private fun InlineImage(block: ContentBlock.Image) {
     }
     val image = bitmap
     if (image == null) {
-        Text("Gambar tidak dapat didekode", style = MaterialTheme.typography.bodySmall)
+        Text("Image could not be decoded", style = MaterialTheme.typography.bodySmall)
     } else {
         Image(
             bitmap = image.asImageBitmap(),
-            contentDescription = "Lampiran gambar $block.mimeType",
+            contentDescription = "Image attachment $block.mimeType",
             contentScale = ContentScale.Fit,
             modifier = Modifier
                 .height(180.dp)
@@ -247,7 +255,7 @@ fun ToolCard(
         result?.isError == true -> "error"
         result != null -> "success"
         running -> "running"
-        else -> "selesai"
+        else -> "done"
     }
     val output = result?.content?.joinToString("\n") { block ->
         when (block) {
@@ -260,10 +268,13 @@ fun ToolCard(
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = !expanded },
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = MaterialTheme.shapes.largeIncreased,
     ) {
-        Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            Modifier.padding(12.dp).animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("$name · ${toolCallId.take(8)}", style = MaterialTheme.typography.titleSmall)
                 Spacer(Modifier.weight(1f))
@@ -290,7 +301,7 @@ fun ToolCard(
                 }
                 val partial = partialResult?.toString()
                 if (result == null && partial != null) {
-                    Text("output (berjalan)", style = MaterialTheme.typography.labelSmall)
+                    Text("output (running)", style = MaterialTheme.typography.labelSmall)
                     Text(partial, style = MaterialTheme.typography.bodySmall)
                 }
                 if (output.isNotBlank()) {
@@ -298,7 +309,7 @@ fun ToolCard(
                     Text(output, style = MaterialTheme.typography.bodySmall)
                 }
             } else if (result != null || partialResult != null) {
-                Text("Ketuk untuk detail", style = MaterialTheme.typography.labelSmall)
+                Text("Tap for details", style = MaterialTheme.typography.labelSmall)
             }
         }
     }
