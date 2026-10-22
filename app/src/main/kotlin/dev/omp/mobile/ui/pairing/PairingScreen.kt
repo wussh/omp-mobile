@@ -295,7 +295,7 @@ private fun PasteLink(
                 },
                 enabled = text.isNotBlank(),
                 shape = CircleShape,
-            ) { Text("Paste") }
+            ) { Text("Pair") }
             TextButton(onClick = { text = "" }) { Text("Clear") }
         }
     }

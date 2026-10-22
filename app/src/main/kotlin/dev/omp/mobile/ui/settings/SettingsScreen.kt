@@ -76,12 +76,21 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
 
         Text("Theme", style = MaterialTheme.typography.titleMedium)
         val modes = ThemeMode.values()
+        val segmentColors = SegmentedButtonDefaults.colors(
+            activeContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+            activeContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            activeBorderColor = MaterialTheme.colorScheme.secondary,
+            inactiveContainerColor = MaterialTheme.colorScheme.surface,
+            inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            inactiveBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        )
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             modes.forEachIndexed { index, mode ->
                 SegmentedButton(
                     selected = theme == mode,
                     onClick = { viewModel.saveTheme(mode) },
                     shape = SegmentedButtonDefaults.itemShape(index, modes.size),
+                    colors = segmentColors,
                 ) {
                     Text(
                         when (mode) {
