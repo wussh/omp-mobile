@@ -70,11 +70,71 @@ class CollabCodecTest {
     }
 
     @Test
+    fun promptImageToStringRedactsInlineData() {
+        val text = PromptImage("c2VjcmV0LWJ5dGVz", "image/png").toString()
+        assertEquals("PromptImage(data=<redacted>, mimeType=image/png)", text)
+    }
+
+    @Test
+    fun promptWithImagesUsesWireImageContent() {
+        val text = encodeGuestFrame(
+            GuestFrame.Prompt(
+                text = "",
+                images = listOf(PromptImage("YWJj", "image/jpeg")),
+            ),
+        )
+        assertEquals(
+            """{"t":"prompt","text":"","images":[{"type":"image","data":"YWJj","mimeType":"image/jpeg"}]}""",
+            text,
+        )
+    }
+
+    @Test
     fun cancelResponseOmitsNullValue() {
         assertEquals("""{"t":"ui-response","reqId":7}""", encodeGuestFrame(GuestFrame.UiResponse(7, null)))
         assertEquals(
             """{"t":"ui-response","reqId":7,"value":"Option A"}""",
             encodeGuestFrame(GuestFrame.UiResponse(7, "Option A")),
         )
+    }
+
+    @Test
+    fun agentCommandsUseTypedWireNamesAndOmitUnusedText() {
+        assertEquals(
+            """{"t":"agent-cmd","cmd":"chat","agentId":"a1","text":"hello"}""",
+            encodeGuestFrame(GuestFrame.AgentCmd(AgentCommand.CHAT, "a1", "hello")),
+        )
+        assertEquals(
+            """{"t":"agent-cmd","cmd":"kill","agentId":"a1"}""",
+            encodeGuestFrame(GuestFrame.AgentCmd(AgentCommand.KILL, "a1", null)),
+        )
+        assertEquals(
+            """{"t":"agent-cmd","cmd":"revive","agentId":"a1"}""",
+            encodeGuestFrame(GuestFrame.AgentCmd(AgentCommand.REVIVE, "a1", "ignored")),
+        )
+    }
+
+    @Test
+    fun fetchTranscriptCarriesRequestCursor() {
+        assertEquals(
+            """{"t":"fetch-transcript","reqId":3,"agentId":"a1","fromByte":128}""",
+            encodeGuestFrame(GuestFrame.FetchTranscript(3, "a1", 128)),
+        )
+    }
+
+    @Test
+    fun transcriptResponseParsesRowsAndHostError() {
+        val rows = parseHostFrame("""{"t":"transcript","reqId":9,"text":"{\"a\":1}\n","newSize":256}""")
+        assertEquals(HostFrame.Transcript(9, "{\"a\":1}\n", 256, null), rows)
+
+        val error = parseHostFrame("""{"t":"transcript","reqId":10,"text":"","newSize":0,"error":"missing file"}""")
+        assertEquals(HostFrame.Transcript(10, "", 0, "missing file"), error)
+    }
+
+    @Test
+    fun malformedTranscriptResponseIsAFormatError() {
+        assertThrows(WireFormatException::class.java) {
+            parseHostFrame("""{"t":"transcript","reqId":1,"text":"x"}""")
+        }
     }
 }

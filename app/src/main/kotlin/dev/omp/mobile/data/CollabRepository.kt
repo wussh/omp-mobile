@@ -1,11 +1,14 @@
 package dev.omp.mobile.data
 
+import dev.omp.mobile.collab.AgentCommand
 import dev.omp.mobile.collab.CollabClient
 import dev.omp.mobile.collab.ConnectionStatus
 import dev.omp.mobile.collab.PairingCredentials
+import dev.omp.mobile.collab.PromptImage
 import dev.omp.mobile.collab.PairingParseResult
 import dev.omp.mobile.collab.ReplicaSnapshot
 import dev.omp.mobile.collab.SendResult
+import dev.omp.mobile.collab.TranscriptResult
 import dev.omp.mobile.collab.parseCollabLink
 import dev.omp.mobile.BuildConfig
 import kotlinx.coroutines.CoroutineScope
@@ -53,9 +56,11 @@ interface CollabRepository {
     suspend fun forget(id: String)
     fun retry()
     fun disconnect()
-    suspend fun sendPrompt(text: String): SendResult
+    suspend fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): SendResult
     suspend fun interrupt(): SendResult
     suspend fun respond(reqId: Long, value: String?): SendResult
+    suspend fun sendAgentCommand(command: AgentCommand, agentId: String, text: String? = null): SendResult
+    suspend fun fetchTranscript(agentId: String, fromByte: Long): TranscriptResult
     suspend fun setNickname(value: String)
     suspend fun setTheme(mode: ThemeMode)
     fun clearNotice()
@@ -325,11 +330,21 @@ class DefaultCollabRepository @Inject constructor(
         scope.launch { store.setLastPairingId(null) }
     }
 
-    override suspend fun sendPrompt(text: String): SendResult = client.sendPrompt(text)
+    override suspend fun sendPrompt(text: String, images: List<PromptImage>): SendResult =
+        client.sendPrompt(text, images)
 
     override suspend fun interrupt(): SendResult = client.interrupt()
 
     override suspend fun respond(reqId: Long, value: String?): SendResult = client.respond(reqId, value)
+
+    override suspend fun sendAgentCommand(
+        command: AgentCommand,
+        agentId: String,
+        text: String?,
+    ): SendResult = client.sendAgentCommand(command, agentId, text)
+
+    override suspend fun fetchTranscript(agentId: String, fromByte: Long): TranscriptResult =
+        client.fetchTranscript(agentId, fromByte)
 
     override suspend fun setNickname(value: String) {
         val result = store.setNickname(value)

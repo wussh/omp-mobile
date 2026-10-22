@@ -1,5 +1,7 @@
 package dev.omp.mobile.ui.chat
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
@@ -8,7 +10,10 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,15 +21,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -32,14 +42,28 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.compose.components.markdownComponents
-import com.mikepenz.markdown.compose.elements.highlightedCodeBlock
-import com.mikepenz.markdown.compose.elements.highlightedCodeFence
+import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
+import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.rememberMarkdownState
+import dev.omp.mobile.R
 import dev.omp.mobile.collab.ActiveTool
 import dev.omp.mobile.collab.BranchSummaryEntry
 import dev.omp.mobile.collab.COLLAB_PROMPT_MESSAGE_TYPE
@@ -53,17 +77,35 @@ import dev.omp.mobile.collab.SessionEntry
 import dev.omp.mobile.collab.ThinkingLevelChangeEntry
 import dev.omp.mobile.collab.WireMessage
 import dev.omp.mobile.collab.fromParticipant
+import dev.snipme.highlights.Highlights
+import dev.snipme.highlights.model.BoldHighlight
+import dev.snipme.highlights.model.ColorHighlight
+import dev.snipme.highlights.model.SyntaxLanguage
+import dev.snipme.highlights.model.SyntaxThemes
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.util.Base64
 
 private val PrettyJson = Json { prettyPrint = true }
 private val OmpMarkdownComponents = markdownComponents(
-    codeBlock = highlightedCodeBlock,
-    codeFence = highlightedCodeFence,
+    codeBlock = { model ->
+        MarkdownCodeBlock(content = model.content, node = model.node, style = model.typography.code) { code, language, style ->
+            NativeCodeBlock(code = code, language = language, style = style)
+        }
+    },
+    codeFence = { model ->
+        MarkdownCodeFence(content = model.content, node = model.node, style = model.typography.code) { code, language, style ->
+            NativeCodeBlock(code = code, language = language, style = style)
+        }
+    },
 )
 
 @Composable
@@ -71,11 +113,12 @@ fun JournalRow(
     entry: SessionEntry,
     results: Map<String, WireMessage.ToolResult>,
     active: Map<String, ActiveTool>,
+    latestTodoCallId: String?,
 ) {
     when (entry) {
         is MessageEntry -> when (val message = entry.message) {
             is WireMessage.User -> UserRow("host", message.content, entry.timestamp)
-            is WireMessage.Assistant -> AssistantRow(message, results, active, pending = false)
+            is WireMessage.Assistant -> AssistantRow(message, results, active, pending = false, latestTodoCallId = latestTodoCallId)
             is WireMessage.ToolResult -> Unit // rendered through its toolCall pairing
             is WireMessage.Developer -> Unit
         }
@@ -121,6 +164,7 @@ fun AssistantRow(
     results: Map<String, WireMessage.ToolResult>,
     active: Map<String, ActiveTool>,
     pending: Boolean,
+    latestTodoCallId: String?,
 ) {
     Column(
         modifier = Modifier
@@ -134,16 +178,24 @@ fun AssistantRow(
                 is ContentBlock.Thinking -> ThinkingBlock(block.thinking, redacted = false)
                 is ContentBlock.RedactedThinking -> ThinkingBlock("", redacted = true)
                 is ContentBlock.ToolCall -> {
-                    val live = active[block.id]
-                    ToolCard(
-                        toolCallId = block.id,
-                        name = block.name,
-                        intent = block.intent ?: live?.intent,
-                        args = live?.args ?: block.arguments,
-                        partialResult = live?.partialResult,
-                        result = results[block.id],
-                        running = results[block.id] == null && (live != null || pending),
-                    )
+                    val result = results[block.id]
+                    val staleTodo = block.name == "todo" &&
+                        result != null &&
+                        !result.isError &&
+                        latestTodoCallId != null &&
+                        block.id != latestTodoCallId
+                    if (!staleTodo) {
+                        val live = active[block.id]
+                        ToolCard(
+                            toolCallId = block.id,
+                            name = block.name,
+                            intent = block.intent ?: live?.intent,
+                            args = live?.args ?: block.arguments,
+                            partialResult = live?.partialResult,
+                            result = result,
+                            running = result == null && (live != null || pending),
+                        )
+                    }
                 }
 
                 is ContentBlock.Image -> InlineImage(block)
@@ -184,6 +236,112 @@ fun MarkdownText(text: String) {
             components = OmpMarkdownComponents,
             modifier = Modifier.fillMaxWidth(),
         )
+    }
+}
+
+@Composable
+private fun NativeCodeBlock(code: String, language: String?, style: TextStyle) {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val highlighted by produceState(initialValue = AnnotatedString(code), code, language, dark) {
+        value = withContext(Dispatchers.Default) {
+            highlightCode(code = code, language = language, dark = dark)
+        }
+    }
+    val context = LocalContext.current
+    var copied by remember(code) { mutableStateOf(false) }
+    LaunchedEffect(copied) {
+        if (copied) {
+            delay(1_500)
+            copied = false
+        }
+    }
+    val languageLabel = language?.trim()?.takeIf { it.isNotEmpty() } ?: "Code"
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp)
+            .background(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = MaterialTheme.shapes.medium,
+            )
+            .padding(start = 12.dp, top = 4.dp, end = 4.dp, bottom = 8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                languageLabel,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.weight(1f))
+            if (copied) {
+                Text(
+                    "Copied",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            IconButton(
+                onClick = {
+                    context.getSystemService(ClipboardManager::class.java)
+                        ?.setPrimaryClip(ClipData.newPlainText("Code", code))
+                    copied = true
+                },
+                modifier = Modifier.size(48.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_content_copy),
+                    contentDescription = if (copied) "Code copied" else "Copy code",
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        Text(
+            text = highlighted,
+            style = style.copy(
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(end = 8.dp),
+        )
+    }
+}
+
+private fun highlightCode(code: String, language: String?, dark: Boolean): AnnotatedString {
+    val syntax = syntaxLanguageFor(language) ?: return AnnotatedString(code)
+    val builder = Highlights.Builder()
+        .theme(SyntaxThemes.default(darkMode = dark))
+        .code(code)
+    val highlights = builder.language(syntax).build().getHighlights()
+    return buildAnnotatedString {
+        append(code)
+        highlights.forEach { highlight ->
+            val span = when (highlight) {
+                is ColorHighlight -> SpanStyle(color = Color(highlight.rgb).copy(alpha = 1f))
+                is BoldHighlight -> SpanStyle(fontWeight = FontWeight.Bold)
+            }
+            addStyle(span, highlight.location.start, highlight.location.end)
+        }
+    }
+}
+
+private fun syntaxLanguageFor(language: String?): SyntaxLanguage? {
+    val normalized = language?.trim()?.lowercase()?.takeIf { it.isNotEmpty() } ?: return null
+    return SyntaxLanguage.getByName(normalized) ?: when (normalized) {
+        "kt", "kts" -> SyntaxLanguage.KOTLIN
+        "js", "jsx", "mjs", "cjs" -> SyntaxLanguage.JAVASCRIPT
+        "ts", "tsx" -> SyntaxLanguage.TYPESCRIPT
+        "sh", "zsh", "console" -> SyntaxLanguage.SHELL
+        "py" -> SyntaxLanguage.PYTHON
+        "rs" -> SyntaxLanguage.RUST
+        "c++", "cc", "hpp", "hxx" -> SyntaxLanguage.CPP
+        "c#" -> SyntaxLanguage.CSHARP
+        "golang" -> SyntaxLanguage.GO
+        "rb" -> SyntaxLanguage.RUBY
+        "pl" -> SyntaxLanguage.PERL
+        "coffee" -> SyntaxLanguage.COFFEESCRIPT
+        else -> null
     }
 }
 
@@ -240,6 +398,194 @@ private fun decodeThumbnail(base64: String): Bitmap? {
     }.getOrNull()
 }
 
+enum class TodoTaskStatus(val label: String, val symbol: String) {
+    Pending("Pending", "○"),
+    InProgress("In progress", "→"),
+    Completed("Completed", "✓"),
+    Abandoned("Abandoned", "✕"),
+    Blocked("Blocked", "!"),
+}
+
+data class TodoTaskView(
+    val content: String,
+    val status: TodoTaskStatus,
+    val blocker: String?,
+)
+
+data class TodoPhaseView(
+    val name: String,
+    val tasks: List<TodoTaskView>,
+)
+
+/**
+ * Parses the canonical `todo` tool-result details from can1357/oh-my-pi @
+ * 0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0:
+ * `{ op, phases: [{ name, tasks: [{ content, status, blocker? }] }] }`.
+ * Returns null when [details] does not carry a phases array (legacy or non-todo results).
+ */
+fun parseTodoPhases(details: JsonElement?): List<TodoPhaseView>? {
+    val root = details as? JsonObject ?: return null
+    val phases = root["phases"] as? JsonArray ?: return null
+    return phases.mapNotNull phaseLoop@{ element ->
+        val phase = element as? JsonObject ?: return@phaseLoop null
+        val name = phase.string("name") ?: return@phaseLoop null
+        val tasks = (phase["tasks"] as? JsonArray)?.mapNotNull taskLoop@{ taskElement ->
+            val task = taskElement as? JsonObject ?: return@taskLoop null
+            val content = task.string("content") ?: return@taskLoop null
+            val status = when (task.string("status")) {
+                "pending" -> TodoTaskStatus.Pending
+                "in_progress" -> TodoTaskStatus.InProgress
+                "completed" -> TodoTaskStatus.Completed
+                "abandoned" -> TodoTaskStatus.Abandoned
+                "blocked" -> TodoTaskStatus.Blocked
+                else -> return@taskLoop null
+            }
+            TodoTaskView(
+                content = content,
+                status = status,
+                blocker = task.string("blocker")?.takeIf { it.isNotBlank() },
+            )
+        }.orEmpty()
+        TodoPhaseView(name = name, tasks = tasks)
+    }
+}
+
+/** Latest successful `todo` result carrying canonical phases; failed updates do not replace visible state. */
+fun latestTodoResult(results: Map<String, WireMessage.ToolResult>): WireMessage.ToolResult? =
+    results.values.asSequence()
+        .filter { it.toolName == "todo" && !it.isError && (it.details as? JsonObject)?.get("phases") is JsonArray }
+        .maxByOrNull { it.timestamp }
+
+private fun JsonObject.string(key: String): String? = (this[key] as? JsonPrimitive)?.contentOrNull
+
+@Composable
+private fun TodoChecklistCard(
+    toolCallId: String,
+    phases: List<TodoPhaseView>,
+    details: JsonElement?,
+) {
+    var expanded by remember(toolCallId) { mutableStateOf(true) }
+    val total = phases.sumOf { it.tasks.size }
+    val completed = phases.sumOf { phase -> phase.tasks.count { it.status == TodoTaskStatus.Completed } }
+    val abandoned = phases.sumOf { phase -> phase.tasks.count { it.status == TodoTaskStatus.Abandoned } }
+    val blocked = phases.sumOf { phase -> phase.tasks.count { it.status == TodoTaskStatus.Blocked } }
+    val summary = if (total == 0) {
+        "No tasks"
+    } else {
+        buildString {
+            append("$completed/$total done")
+            if (abandoned > 0) append(" · $abandoned dropped")
+            if (blocked > 0) append(" · $blocked blocked")
+        }
+    }
+    val op = (details as? JsonObject)?.string("op")
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded },
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = MaterialTheme.shapes.largeIncreased,
+    ) {
+        Column(
+            Modifier.padding(12.dp).animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    if (op.isNullOrBlank()) "todo" else "todo · $op",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Spacer(Modifier.weight(1f))
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (blocked > 0) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+            }
+            if (expanded) {
+                phases.forEachIndexed { index, phase ->
+                    val phaseDone = phase.tasks.count { it.status == TodoTaskStatus.Completed }
+                    Text(
+                        "${index + 1}. ${phase.name} · $phaseDone/${phase.tasks.size}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = if (index == 0) 2.dp else 6.dp),
+                    )
+                    phase.tasks.forEach { task -> TodoTaskRow(task) }
+                }
+                if (phases.isEmpty()) {
+                    Text(
+                        "The host has not recorded any tasks.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            } else {
+                Text("Tap for details", style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoTaskRow(task: TodoTaskView) {
+    val colors = MaterialTheme.colorScheme
+    val accent = when (task.status) {
+        TodoTaskStatus.Pending -> colors.onSurfaceVariant
+        TodoTaskStatus.InProgress -> colors.primary
+        TodoTaskStatus.Completed -> colors.primary
+        TodoTaskStatus.Abandoned -> colors.onSurfaceVariant
+        TodoTaskStatus.Blocked -> colors.error
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics(mergeDescendants = true) {
+                contentDescription = buildString {
+                    append(task.status.label)
+                    append(": ")
+                    append(task.content)
+                    task.blocker?.let {
+                        append(" — blocked: ")
+                        append(it)
+                    }
+                }
+            }
+            .padding(start = 4.dp, top = 2.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            task.status.symbol,
+            style = MaterialTheme.typography.bodySmall,
+            color = accent,
+            modifier = Modifier.width(20.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                task.content,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (task.status == TodoTaskStatus.Completed || task.status == TodoTaskStatus.Abandoned) {
+                    colors.onSurfaceVariant
+                } else {
+                    colors.onSurface
+                },
+                textDecoration = if (task.status == TodoTaskStatus.Abandoned) TextDecoration.LineThrough else null,
+            )
+            task.blocker?.let {
+                Text(
+                    "blocked: $it",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.error,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 fun ToolCard(
     toolCallId: String,
@@ -250,6 +596,13 @@ fun ToolCard(
     result: WireMessage.ToolResult?,
     running: Boolean,
 ) {
+    val todoPhases = remember(name, result) {
+        if (name == "todo" && result?.isError != true) parseTodoPhases(result?.details) else null
+    }
+    if (todoPhases != null) {
+        TodoChecklistCard(toolCallId = toolCallId, phases = todoPhases, details = result?.details)
+        return
+    }
     var expanded by remember(toolCallId) { mutableStateOf(false) }
     val status = when {
         result?.isError == true -> "error"
@@ -260,7 +613,7 @@ fun ToolCard(
     val output = result?.content?.joinToString("\n") { block ->
         when (block) {
             is ContentBlock.Text -> block.text
-            is ContentBlock.Image -> "[gambar ${block.mimeType}]"
+            is ContentBlock.Image -> "[image ${block.mimeType}]"
             else -> ""
         }
     }.orEmpty()

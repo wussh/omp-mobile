@@ -1,6 +1,9 @@
 package dev.omp.mobile.ui.chat
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -9,7 +12,9 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,8 +32,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -38,6 +41,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -54,6 +58,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -77,6 +84,7 @@ import java.util.Locale
 @Composable
 fun ChatScreen(
     viewModel: ChatViewModel,
+    agentControlsViewModel: AgentControlsViewModel,
     onOpenSessions: () -> Unit,
 ) {
     val session by viewModel.session.collectAsStateWithLifecycle()
@@ -85,7 +93,11 @@ fun ChatScreen(
     val warning by viewModel.sendWarning.collectAsStateWithLifecycle()
     val interruptPending by viewModel.interruptPending.collectAsStateWithLifecycle()
     val answered by viewModel.answeredRequests.collectAsStateWithLifecycle()
+    val attachments by viewModel.attachments.collectAsStateWithLifecycle()
+    val preparingImages by viewModel.preparingImages.collectAsStateWithLifecycle()
+    val sendingPrompt by viewModel.sendingPrompt.collectAsStateWithLifecycle()
     val replica = session.replica
+    val latestTodoCallId = remember(replica.toolResults) { latestTodoResult(replica.toolResults)?.toolCallId }
 
     val entries = remember(replica.entries) {
         replica.entries.filter { it.isRenderable() }
@@ -165,6 +177,7 @@ fun ChatScreen(
                 }
             }
 
+            AgentControls(agentControlsViewModel)
             LazyColumn(
                 state = listState,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -194,7 +207,7 @@ fun ChatScreen(
                 }
                 items(entries, key = { it.id }) { entry ->
                     Box(Modifier.animateItem()) {
-                        JournalRow(entry, replica.toolResults, replica.activeTools)
+                        JournalRow(entry, replica.toolResults, replica.activeTools, latestTodoCallId)
                     }
                 }
                 if (hasStream) {
@@ -205,6 +218,7 @@ fun ChatScreen(
                                 results = replica.toolResults,
                                 active = replica.activeTools,
                                 pending = !replica.streamDone,
+                                latestTodoCallId = latestTodoCallId,
                             )
                         }
                     }
@@ -248,15 +262,20 @@ fun ChatScreen(
                     onClick = { followTail = true },
                     modifier = Modifier.align(Alignment.End).padding(end = 16.dp, bottom = 8.dp),
                 ) {
-                    Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Back to latest")
+                    Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = "Back to latest")
                 }
             }
 
             Composer(
                 session = session,
                 draft = draft,
+                attachments = attachments,
+                preparingImages = preparingImages,
+                sendingPrompt = sendingPrompt,
                 interruptPending = interruptPending,
                 onDraft = viewModel::setDraft,
+                onPickImages = viewModel::addImages,
+                onRemoveImage = viewModel::removeImage,
                 onSend = viewModel::send,
                 onInterrupt = viewModel::interrupt,
             )
@@ -406,12 +425,20 @@ private fun ConnectionBanner(
 private fun Composer(
     session: dev.omp.mobile.data.CollabSessionState,
     draft: String,
+    attachments: List<PendingImage>,
+    preparingImages: Boolean,
+    sendingPrompt: Boolean,
     interruptPending: Boolean,
     onDraft: (String) -> Unit,
+    onPickImages: (List<android.net.Uri>) -> Unit,
+    onRemoveImage: (String) -> Unit,
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
 ) {
     val busy = session.replica.working || session.replica.state?.isStreaming == true
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickMultipleVisualMedia(MAX_PROMPT_IMAGES),
+    ) { uris -> onPickImages(uris) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -431,12 +458,73 @@ private fun Composer(
                 style = MaterialTheme.typography.labelSmall,
             )
         }
+        if (attachments.isNotEmpty() || preparingImages) {
+            Row(
+                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                attachments.forEach { image ->
+                    Box(Modifier.size(72.dp)) {
+                        Image(
+                            bitmap = image.thumbnail.asImageBitmap(),
+                            contentDescription = image.name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(72.dp).clip(MaterialTheme.shapes.medium),
+                        )
+                        FilledTonalButton(
+                            onClick = { onRemoveImage(image.id) },
+                            modifier = Modifier.align(Alignment.TopEnd).size(48.dp),
+                            shape = CircleShape,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_close),
+                                contentDescription = "Remove ${image.name}",
+                            )
+                        }
+                    }
+                }
+                if (preparingImages) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        ActivityIndicator(Modifier.size(20.dp))
+                        Text("Preparing images…", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                if (attachments.isNotEmpty()) {
+                    Text(
+                        "${attachments.size}/$MAX_PROMPT_IMAGES",
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+        }
         Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            IconButton(
+                onClick = {
+                    imagePicker.launch(
+                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                    )
+                },
+                enabled = session.hasWriteToken && !session.readOnly && session.pairingId != null &&
+                    attachments.size < MAX_PROMPT_IMAGES && !preparingImages && !sendingPrompt,
+                modifier = Modifier.size(52.dp),
+            ) {
+                Icon(
+                    painter = painterResource(R.drawable.ic_image),
+                    contentDescription = "Attach images",
+                )
+            }
             OutlinedTextField(
                 value = draft,
                 onValueChange = onDraft,
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Message the host…") },
+                placeholder = {
+                    Text(if (attachments.isEmpty()) "Message the host…" else "Add a message (optional)…")
+                },
                 enabled = session.canMutate,
                 minLines = 1,
                 maxLines = 6,
@@ -444,7 +532,8 @@ private fun Composer(
             )
             Button(
                 onClick = onSend,
-                enabled = session.canMutate && draft.isNotBlank(),
+                enabled = session.canMutate && (draft.isNotBlank() || attachments.isNotEmpty()) &&
+                    !preparingImages && !sendingPrompt,
                 modifier = Modifier.size(52.dp),
                 shape = CircleShape,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),

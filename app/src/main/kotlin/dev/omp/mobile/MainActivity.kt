@@ -42,6 +42,7 @@ import dev.omp.mobile.collab.PairingCredentials
 import dev.omp.mobile.data.PairingResult
 import dev.omp.mobile.ui.chat.ChatScreen
 import dev.omp.mobile.ui.chat.ChatViewModel
+import dev.omp.mobile.ui.chat.AgentControlsViewModel
 import dev.omp.mobile.ui.pairing.PairingScreen
 import dev.omp.mobile.ui.sessions.SessionsScreen
 import dev.omp.mobile.ui.sessions.SessionsViewModel
@@ -59,6 +60,7 @@ private enum class MainTab(val label: String, val icon: Int) {
 class MainActivity : ComponentActivity() {
     private val sessionsViewModel: SessionsViewModel by viewModels()
     private val chatViewModel: ChatViewModel by viewModels()
+    private val agentControlsViewModel: AgentControlsViewModel by viewModels()
     private val settingsViewModel: SettingsViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -69,6 +71,7 @@ class MainActivity : ComponentActivity() {
                 OmpApp(
                     sessionsViewModel = sessionsViewModel,
                     chatViewModel = chatViewModel,
+                    agentControlsViewModel = agentControlsViewModel,
                     settingsViewModel = settingsViewModel,
                 )
             }
@@ -81,6 +84,7 @@ class MainActivity : ComponentActivity() {
 private fun OmpApp(
     sessionsViewModel: SessionsViewModel,
     chatViewModel: ChatViewModel,
+    agentControlsViewModel: AgentControlsViewModel,
     settingsViewModel: SettingsViewModel,
 ) {
     var tabName by rememberSaveable { mutableStateOf(MainTab.SESSIONS.name) }
@@ -182,6 +186,7 @@ private fun OmpApp(
 
                     MainTab.CHAT -> ChatScreen(
                         viewModel = chatViewModel,
+                        agentControlsViewModel = agentControlsViewModel,
                         onOpenSessions = { tabName = MainTab.SESSIONS.name },
                     )
 

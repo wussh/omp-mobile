@@ -51,6 +51,22 @@ sealed interface SendResult {
 }
 
 /**
+ * One correlated `fetch-transcript` round trip.
+ *
+ * `Rows` carries decoded JSONL from the requested byte offset and the next
+ * offset base (`newSize`). `HostError` is a terminal read failure reported by
+ * the host; `Timeout`/`Unavailable` are transient (retrying from the same
+ * cursor is correct). `Rejected` means the request was invalid locally.
+ */
+sealed interface TranscriptResult {
+    data class Rows(val text: String, val newSize: Long) : TranscriptResult
+    data class HostError(val message: String) : TranscriptResult
+    data object Timeout : TranscriptResult
+    data object Unavailable : TranscriptResult
+    data object Rejected : TranscriptResult
+}
+
+/**
  * Single-owner guest client.
  *
  * One actor serializes socket callbacks, decryption, replica reduction, and
@@ -73,6 +89,9 @@ class CollabClient(
     private var active: Active? = null
     private var currentSocket: TransportSession? = null
     private var attemptId = 0L
+
+    /** Volatile so enqueue-side callers can bind commands to the session they saw. */
+    @Volatile
     private var activationId = 0L
     private var attemptCounter = 0
     private var welcomed = false
@@ -90,11 +109,21 @@ class CollabClient(
     private var retryScheduled = false
     private var publishJob: Job? = null
 
+    private var transcriptSeq = 0L
+    private val pendingTranscripts = mutableMapOf<Long, PendingTranscript>()
+
     private data class Active(
         val credentials: PairingCredentials,
         val nickname: String,
         val cipher: RoomCipher,
         val activation: Long,
+    )
+
+    private data class PendingTranscript(
+        val reqId: Long,
+        val activation: Long,
+        val timerToken: Long,
+        val ack: CompletableDeferred<TranscriptResult>,
     )
 
     init {
@@ -145,22 +174,56 @@ class CollabClient(
         messages.trySend(Msg.NetworkValidated)
     }
 
-    suspend fun sendPrompt(text: String): SendResult {
-        if (text.isBlank()) return SendResult.Rejected
+    suspend fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): SendResult {
+        if (text.isBlank() && images.isEmpty()) return SendResult.Rejected
         val ack = CompletableDeferred<SendResult>()
-        if (!messages.trySend(Msg.SendPrompt(text, ack)).isSuccess) return SendResult.NotConnected
+        val activation = activationId
+        if (!messages.trySend(Msg.SendPrompt(text, images, activation, ack)).isSuccess) {
+            return SendResult.NotConnected
+        }
         return ack.await()
     }
 
     suspend fun interrupt(): SendResult {
         val ack = CompletableDeferred<SendResult>()
-        if (!messages.trySend(Msg.SendInterrupt(ack)).isSuccess) return SendResult.NotConnected
+        val activation = activationId
+        if (!messages.trySend(Msg.SendInterrupt(activation, ack)).isSuccess) return SendResult.NotConnected
         return ack.await()
     }
 
     suspend fun respond(reqId: Long, value: String?): SendResult {
         val ack = CompletableDeferred<SendResult>()
-        if (!messages.trySend(Msg.SendUiResponse(reqId, value, ack)).isSuccess) return SendResult.NotConnected
+        val activation = activationId
+        if (!messages.trySend(Msg.SendUiResponse(reqId, value, activation, ack)).isSuccess) {
+            return SendResult.NotConnected
+        }
+        return ack.await()
+    }
+
+    /**
+     * Sends a subagent command. Mutating: requires a live Control session.
+     * There is no command ACK on the wire and no outbound replay.
+     */
+    suspend fun sendAgentCommand(command: AgentCommand, agentId: String, text: String? = null): SendResult {
+        val ack = CompletableDeferred<SendResult>()
+        val activation = activationId
+        if (!messages.trySend(Msg.SendAgentCommand(command, agentId, text, activation, ack)).isSuccess) {
+            return SendResult.NotConnected
+        }
+        return ack.await()
+    }
+
+    /**
+     * Reads a subagent transcript from [fromByte]. Any joined session may read
+     * (View links included); the request resolves after a 10s host timeout.
+     */
+    suspend fun fetchTranscript(agentId: String, fromByte: Long): TranscriptResult {
+        if (agentId.isBlank() || fromByte < 0) return TranscriptResult.Rejected
+        val ack = CompletableDeferred<TranscriptResult>()
+        val activation = activationId
+        if (!messages.trySend(Msg.FetchTranscript(agentId, fromByte, activation, ack)).isSuccess) {
+            return TranscriptResult.Unavailable
+        }
         return ack.await()
     }
 
@@ -191,9 +254,22 @@ class CollabClient(
             is Msg.WelcomeTimeout -> onWelcomeTimeout(message.activation, message.attempt, message.token)
             is Msg.ProgressTimeout -> onProgressTimeout(message.activation, message.attempt, message.token)
             is Msg.RetryTick -> onRetryTick(message.activation, message.token)
-            is Msg.SendPrompt -> message.ack.complete(sendPromptNow(message.text))
-            is Msg.SendInterrupt -> message.ack.complete(sendInterruptNow())
-            is Msg.SendUiResponse -> message.ack.complete(sendUiResponseNow(message.reqId, message.value))
+            is Msg.SendPrompt ->
+                message.ack.complete(sendPromptNow(message.text, message.images, message.activation))
+
+            is Msg.SendInterrupt -> message.ack.complete(sendInterruptNow(message.activation))
+            is Msg.SendUiResponse ->
+                message.ack.complete(sendUiResponseNow(message.reqId, message.value, message.activation))
+
+            is Msg.SendAgentCommand -> message.ack.complete(
+                sendAgentCommandNow(message.command, message.agentId, message.text, message.activation),
+            )
+
+            is Msg.FetchTranscript ->
+                fetchTranscriptNow(message.agentId, message.fromByte, message.activation, message.ack)
+            is Msg.TranscriptTimeout ->
+                onTranscriptTimeout(message.activation, message.reqId, message.token)
+
             Msg.Flush -> publishNow()
         }
     }
@@ -416,6 +492,7 @@ class CollabClient(
             // Hint only: tear down and let the close path decide whether the
             // session may recover. It does not prove the session ended.
             invalidateSocket()
+            cancelPendingTranscripts()
             scheduleRetry("Room closed temporarily")
         }
     }
@@ -457,7 +534,13 @@ class CollabClient(
                 publish(immediate = true)
             }
 
-            is HostFrame.BusFrame -> Unit
+            is HostFrame.BusFrame -> if (welcomed) {
+                replica.onBus(frame.channel, frame.data)
+                // Progress mirrors can be chatty; lifecycle transitions publish now.
+                publish(immediate = frame.channel != "task:subagent:progress")
+            }
+
+            is HostFrame.Transcript -> resolveTranscript(frame)
             is HostFrame.UiRequestFrame -> if (welcomed) {
                 replica.onUiRequest(frame.request)
                 publish(immediate = true)
@@ -621,24 +704,111 @@ class CollabClient(
 
     // ── Outbound ──────────────────────────────────────────────────────────
 
-    private fun sendPromptNow(text: String): SendResult {
-        if (text.isBlank()) return SendResult.Rejected
+    /** True when the command was enqueued for a session that is still current. */
+    private fun isCurrentActivation(expected: Long): Boolean = expected == activationId
+
+    private fun sendPromptNow(text: String, images: List<PromptImage>, expected: Long): SendResult {
+        if (text.isBlank() && images.isEmpty()) return SendResult.Rejected
+        if (!isCurrentActivation(expected)) return SendResult.Rejected
         if (status !is ConnectionStatus.Connected) return SendResult.NotConnected
-        return sendMutating(GuestFrame.Prompt(text))
+        return sendMutating(GuestFrame.Prompt(text, images))
     }
 
-    private fun sendInterruptNow(): SendResult {
+    private fun sendInterruptNow(expected: Long): SendResult {
+        if (!isCurrentActivation(expected)) return SendResult.Rejected
         if (status !is ConnectionStatus.Connected) return SendResult.NotConnected
         return sendMutating(GuestFrame.Abort)
     }
 
-    private fun sendUiResponseNow(reqId: Long, value: String?): SendResult {
+    private fun sendUiResponseNow(reqId: Long, value: String?, expected: Long): SendResult {
+        if (!isCurrentActivation(expected)) return SendResult.Rejected
         if (status !is ConnectionStatus.Connected) return SendResult.NotConnected
         if (replica.snapshot().readOnly || active?.credentials?.hasWriteToken != true) return SendResult.ReadOnly
         if (!replica.markUiAnswered(reqId)) return SendResult.Rejected
         val result = sendMutating(GuestFrame.UiResponse(reqId, value))
         if (result != SendResult.Queued) replica.unmarkUiAnswered(reqId)
         return result
+    }
+
+    private fun sendAgentCommandNow(
+        command: AgentCommand,
+        agentId: String,
+        text: String?,
+        expected: Long,
+    ): SendResult {
+        if (!isCurrentActivation(expected)) return SendResult.Rejected
+        if (status !is ConnectionStatus.Connected) return SendResult.NotConnected
+        if (agentId.isBlank()) return SendResult.Rejected
+        val wireText = when (command) {
+            AgentCommand.CHAT -> text?.takeIf { it.isNotBlank() } ?: return SendResult.Rejected
+            AgentCommand.KILL, AgentCommand.REVIVE -> null
+        }
+        return sendMutating(GuestFrame.AgentCmd(command, agentId, wireText))
+    }
+
+    private fun fetchTranscriptNow(
+        agentId: String,
+        fromByte: Long,
+        expected: Long,
+        ack: CompletableDeferred<TranscriptResult>,
+    ) {
+        if (!isCurrentActivation(expected)) {
+            ack.complete(TranscriptResult.Unavailable)
+            return
+        }
+        if (status !is ConnectionStatus.Connected) {
+            ack.complete(TranscriptResult.Unavailable)
+            return
+        }
+        if (agentId.isBlank() || fromByte < 0) {
+            ack.complete(TranscriptResult.Rejected)
+            return
+        }
+        val current = active
+        if (current == null) {
+            ack.complete(TranscriptResult.Unavailable)
+            return
+        }
+        val reqId = ++transcriptSeq
+        val activation = activationId
+        val timerToken = ++timerSeq
+        pendingTranscripts[reqId] = PendingTranscript(reqId, activation, timerToken, ack)
+        val frame = GuestFrame.FetchTranscript(reqId, agentId, fromByte)
+        val sent = runCatching { sendEncrypted(current, encodeGuestFrame(frame)) }.getOrDefault(false)
+        if (!sent) {
+            pendingTranscripts.remove(reqId)
+            ack.complete(TranscriptResult.Unavailable)
+            return
+        }
+        scope.launch {
+            delay(TRANSCRIPT_TIMEOUT_MS)
+            messages.trySend(Msg.TranscriptTimeout(activation, reqId, timerToken))
+        }
+    }
+
+    private fun resolveTranscript(frame: HostFrame.Transcript) {
+        val pending = pendingTranscripts.remove(frame.reqId) ?: return
+        pending.ack.complete(
+            if (frame.error != null) {
+                TranscriptResult.HostError(frame.error)
+            } else {
+                TranscriptResult.Rows(frame.text, frame.newSize)
+            },
+        )
+    }
+
+    private fun onTranscriptTimeout(activation: Long, reqId: Long, token: Long) {
+        val pending = pendingTranscripts[reqId] ?: return
+        if (pending.activation != activation || pending.timerToken != token) return
+        pendingTranscripts.remove(reqId)
+        pending.ack.complete(TranscriptResult.Timeout)
+    }
+
+    private fun cancelPendingTranscripts() {
+        if (pendingTranscripts.isEmpty()) return
+        val pending = pendingTranscripts.values.toList()
+        pendingTranscripts.clear()
+        for (entry in pending) entry.ack.complete(TranscriptResult.Unavailable)
     }
 
     private fun sendMutating(frame: GuestFrame): SendResult {
@@ -654,7 +824,19 @@ class CollabClient(
     private fun sendEncrypted(current: Active, json: String): Boolean {
         val socket = currentSocket ?: return false
         val sealed = current.cipher.seal(json)
-        return socket.send(packEnvelope(0, sealed))
+        val sent = try {
+            socket.send(packEnvelope(0, sealed))
+        } catch (_: Exception) {
+            false
+        }
+        if (!sent && status is ConnectionStatus.Connected) {
+            // Enqueue can fail before a close callback. Recover the socket, never replay the action.
+            invalidateSocket()
+            cancelTimers()
+            replica.onDisconnected()
+            scheduleRetry("Connection lost while sending; reconnecting")
+        }
+        return sent
     }
 
     // ── Publishing / lifecycle helpers ────────────────────────────────────
@@ -706,6 +888,8 @@ class CollabClient(
     }
 
     private fun cancelTimers() {
+        // Epoch change: no pending transcript may resolve a newer socket's request.
+        cancelPendingTranscripts()
         welcomeToken = ++timerSeq
         progressToken = ++timerSeq
         cancelRetryTimer()
@@ -747,13 +931,39 @@ class CollabClient(
         data class WelcomeTimeout(val activation: Long, val attempt: Long, val token: Long) : Msg
         data class ProgressTimeout(val activation: Long, val attempt: Long, val token: Long) : Msg
         data class RetryTick(val activation: Long, val token: Long) : Msg
-        data class SendPrompt(val text: String, val ack: CompletableDeferred<SendResult>) : Msg
-        data class SendInterrupt(val ack: CompletableDeferred<SendResult>) : Msg
+        data class SendPrompt(
+            val text: String,
+            val images: List<PromptImage>,
+            val activation: Long,
+            val ack: CompletableDeferred<SendResult>,
+        ) : Msg
+        data class SendInterrupt(
+            val activation: Long,
+            val ack: CompletableDeferred<SendResult>,
+        ) : Msg
         data class SendUiResponse(
             val reqId: Long,
             val value: String?,
+            val activation: Long,
             val ack: CompletableDeferred<SendResult>,
         ) : Msg
+
+        data class SendAgentCommand(
+            val command: AgentCommand,
+            val agentId: String,
+            val text: String?,
+            val activation: Long,
+            val ack: CompletableDeferred<SendResult>,
+        ) : Msg
+
+        data class FetchTranscript(
+            val agentId: String,
+            val fromByte: Long,
+            val activation: Long,
+            val ack: CompletableDeferred<TranscriptResult>,
+        ) : Msg
+
+        data class TranscriptTimeout(val activation: Long, val reqId: Long, val token: Long) : Msg
 
         data object Flush : Msg
     }
@@ -764,5 +974,6 @@ class CollabClient(
         const val BACKOFF_BASE_MS = 1_000L
         const val BACKOFF_MAX_MS = 30_000L
         const val PUBLISH_COALESCE_MS = 16L
+        const val TRANSCRIPT_TIMEOUT_MS = 10_000L
     }
 }

@@ -6,6 +6,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
+import okio.ByteString.Companion.toByteString
 import java.util.concurrent.TimeUnit
 
 interface TransportSession {
@@ -43,7 +44,7 @@ class OkHttpCollabTransport(
         val request = Request.Builder().url(url).build()
         val socket = client.newWebSocket(request, Listener(listener))
         return object : TransportSession {
-            override fun send(bytes: ByteArray): Boolean = socket.send(ByteString.of(*bytes))
+            override fun send(bytes: ByteArray): Boolean = socket.send(bytes.toByteString())
 
             override fun close(code: Int, reason: String) {
                 socket.close(code, reason)

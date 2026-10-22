@@ -225,3 +225,80 @@ Selesai berarti test perilaku, installable APK, UI nyata, prompt/interrupt/ask, 
 - Jika provider/model belum terautentikasi atau tidak ada host nyata, selesaikan seluruh implementasi dan test lokal yang terjangkau tetapi nyatakan live E2EE/control smoke terblokir pada prerequisite tersebut; jangan mengirim credential ke app atau mengganti host dengan backend/fallback palsu. Bila build native upstream tidak tersedia, host OMP terpasang yang terbukti wire3 boleh menjadi target live; laporkan versi yang diuji tanpa mengklaim checkout baseline telah dijalankan.
 - Jika adb/perangkat belum tersedia, jangan mengklaim QR/Keystore/UI atau Wi-Fi↔mobile telah diverifikasi. Sediakan APK dan hasil JVM/build; runtime Android memakai emulator API26/API36 ketika tersedia, sementara handoff Wi-Fi↔mobile memerlukan ponsel fisik. Jangan menganggap emulator-only network toggle membuktikan handoff seluler nyata.
 
+
+## Implemented extensions and current delivery
+
+This section supersedes the original UI exclusions above. The pinned wire contract remains
+`0b5c27ab24719c86a5986b95ee55f4e75bc1aaa0`, protocol 3; no host-side protocol extension is shipped.
+The current build uses the versions in `gradle/libs.versions.toml` (AGP 9.4.1, Gradle 9.8.2,
+Compose BOM 2026.09.00, Material 3 1.5.0-beta02, compile/target SDK 37, min SDK 26).
+User-facing app text is English.
+
+### Gallery, icons, and code
+
+- Chat's image button opens the Android photo picker for up to four images. Preview, remove,
+  image-only prompts, and text-plus-image prompts use the existing encrypted `prompt.images`
+  wire field; this does not introduce an upload backend.
+- Image preparation runs on IO with sampled stream decoding, EXIF orientation, JPEG compression
+  and small previews. Maximum dimension 1600px; encoded JPEG at most 2,000,000 bytes per image;
+  combined attachment base64 at most 8,000,000 characters. Drafts remain in memory per pairing.
+  A picker-induced foreground pause does not discard the selected images. Rejected sends keep
+  the draft; completion from an earlier pairing cannot clear another pairing's draft.
+- The host/provider must accept vision input. View links cannot send images. An uncertain,
+  already-queued prompt is never automatically resent.
+- Navigation and controls use official Material Symbols Rounded XML assets. Source and copyright
+  are recorded in each drawable; the redistribution license accompanies the APK in
+  `dist/material-symbols-LICENSE.txt`. Android's [icon guidance](https://developer.android.com/develop/ui/compose/graphics/images/material)
+  recommends these assets rather than the legacy `material-icons` dependency, which was removed.
+- Native fenced code has language labels, background syntax highlighting, horizontal scrolling,
+  monospace text, and an explicit copy action. Indented/unknown-language code remains readable
+  without guessed highlighting. Colors follow the app's chosen theme, not just the system theme.
+  The renderer stays pinned to [v0.37.0](https://github.com/mikepenz/multiplatform-markdown-renderer/tree/v0.37.0).
+
+### Todo and subagents
+
+- Todo checklists render actual `todo` result `details.phases[].tasks[]` from the pinned host:
+  pending, in-progress, completed, abandoned and blocked, including blocker text. Only the latest
+  successful canonical update is expanded as the current checklist; failed updates remain errors.
+  Missing host details are not replaced with a fabricated checklist.
+- The subagent panel exposes the host's list, status and available progress/lifecycle traffic.
+  Control links can chat, kill and revive; View links can read a transcript when the host reports
+  `hasSessionFile`. Transcript reads use correlated requests, a 10-second timeout, committed byte
+  offsets, manual incremental loading and selectable raw JSONL. Disconnects and pairing changes
+  invalidate pending reads. Agent commands are not replayed or claimed acknowledged.
+- Plan/Vibe switching and model selection are not supported by protocol 3 guest frames. No
+  decorative toggle or unreliable slash-prompt substitute is included; these need host support.
+
+### Automatic connection recovery
+
+- Socket enqueue refusal or a transport-send exception while Connected now closes the stale
+  attempt and enters automatic backoff/reconnect/resync. Previously this branch returned Rejected
+  while leaving the UI Connected until another close callback arrived.
+- Idle connections retain OkHttp's 15-second ping/pong watchdog. Transport failures, retryable
+  closes and network changes recover through the single client owner. Transcript history remains
+  visible until the replacement snapshot is complete.
+- This remains a foreground-only connection: background pauses it, returning resumes it.
+  Manual disconnect, encrypted bye, invalid keys/protocol and terminal join failures are not
+  overridden by a reconnect loop. Socket recovery never replays prompts or agent commands.
+
+### Verification of this extension
+
+All Gradle builds and Android runtime checks ran on the tbs-dev cluster, not local Docker/Gradle.
+
+| Check | Observed result |
+| --- | --- |
+| `:collab:testDebugUnitTest` | 73 tests, 0 failures/errors |
+| `:app:assembleDebug`, `:app:assembleDebugAndroidTest` | BUILD SUCCESSFUL |
+| Installed Android instrumentation, emulator API 36 | 10 tests passed: Keystore, image preparation, draft isolation and failed-send retention |
+| Native QR gallery pairing | Public synthetic Control link connected after snapshot |
+| Native gallery selection | Two previews, removal to one, image-only send received as one JPEG |
+| Native subagent actions | Chat, kill, revive; transcript reads from byte 0 then 382 |
+| Native code blocks | Exact clipboard text/indentation preserved; app Light/Dark overrides exercised |
+| Idle unresponsive socket | Ping failure followed by automatic rejoin in 28.71 seconds |
+| Drop immediately after a prompt | Automatic rejoin; exactly one matching prompt received, no replay |
+
+The interaction host was a throwaway AES-GCM wire-3 fixture with public test credentials, not an
+OMP process or authenticated model/provider. These checks do not substitute for the original
+real-host V4/V5 matrix, physical Wi-Fi/cellular handoff, background execution, or an API-26 device run.
+The debug APK is `dist/omp-mobile-0.1.0-debug.apk`; its adjacent SHA256 file is the delivery checksum.
+

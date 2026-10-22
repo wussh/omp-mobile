@@ -1,6 +1,8 @@
 package dev.omp.mobile.collab
 
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
@@ -16,6 +18,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import kotlinx.coroutines.cancel
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
 private class FakeTransport(private val key: ByteArray) : TransportFactory {
@@ -207,6 +212,48 @@ class CollabClientTest {
         assertTrue(frames.any { it == """{"t":"prompt","text":"  exact text  "}""" })
         assertTrue(frames.any { it == """{"t":"abort"}""" })
         assertEquals(SendResult.Rejected, client.sendPrompt("   "))
+    }
+
+    @Test
+    fun promptCarriesImagesBesideOptionalText() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        val session = connected(client, transport)
+        val image = PromptImage("YWJj", "image/jpeg")
+        assertEquals(SendResult.Queued, client.sendPrompt("", listOf(image)))
+        assertTrue(
+            session.guestFrames().any {
+                it == """{"t":"prompt","text":"","images":[{"type":"image","data":"YWJj","mimeType":"image/jpeg"}]}"""
+            },
+        )
+    }
+
+    @Test
+    fun rejectedSocketSendReconnectsAndResyncsWithoutReplayingPrompt() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        val old = connected(client, transport)
+        old.deliver("""{"t":"entry","entry":${userEntryJson("retained")}}""")
+        runCurrent()
+        // A socket may refuse enqueue before its close callback reaches the actor.
+        old.close(1000, "")
+        assertEquals(SendResult.Rejected, client.sendPrompt("do not replay"))
+        val reconnecting = client.state.value.status
+        assertTrue(reconnecting is ConnectionStatus.Reconnecting)
+        assertEquals(listOf("retained"), client.state.value.replica.entries.map { it.id })
+        advanceTimeBy((reconnecting as ConnectionStatus.Reconnecting).nextDelayMs + 1)
+        runCurrent()
+        val replacement = transport.sessions.last()
+        assertEquals(2, transport.sessions.size)
+        replacement.open()
+        runCurrent()
+        replacement.deliver(welcomeJson(1))
+        replacement.deliver(chunkJson(listOf("resynced"), final = true))
+        runCurrent()
+        assertEquals(ConnectionStatus.Connected, client.state.value.status)
+        assertEquals(listOf("resynced"), client.state.value.replica.entries.map { it.id })
+        assertEquals(1, replacement.guestFrames().size)
+        assertTrue(replacement.guestFrames().single().contains(""""t":"hello""""))
     }
 
     @Test
@@ -496,10 +543,161 @@ class CollabClientTest {
     }
 
     @Test
+    fun agentCommandsRequireControlAndSerializeExactlyOnce() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        val session = connected(client, transport)
+
+        assertEquals(SendResult.Queued, client.sendAgentCommand(AgentCommand.CHAT, "a1", "hello agent"))
+        assertEquals(SendResult.Queued, client.sendAgentCommand(AgentCommand.KILL, "a1"))
+        assertEquals(SendResult.Queued, client.sendAgentCommand(AgentCommand.REVIVE, "a1", "ignored"))
+        val frames = session.guestFrames().filter { it.contains("\"t\":\"agent-cmd\"") }
+        assertEquals(
+            listOf(
+                """{"t":"agent-cmd","cmd":"chat","agentId":"a1","text":"hello agent"}""",
+                """{"t":"agent-cmd","cmd":"kill","agentId":"a1"}""",
+                """{"t":"agent-cmd","cmd":"revive","agentId":"a1"}""",
+            ),
+            frames,
+        )
+
+        assertEquals(SendResult.Rejected, client.sendAgentCommand(AgentCommand.CHAT, "a1", "   "))
+        assertEquals(SendResult.Rejected, client.sendAgentCommand(AgentCommand.KILL, " "))
+        assertEquals(3, session.guestFrames().count { it.contains("\"t\":\"agent-cmd\"") })
+
+        val viewTransport = FakeTransport(key)
+        val viewClient = CollabClient(backgroundScope, viewTransport, random = Random(1))
+        val viewSession = connected(viewClient, viewTransport, withToken = false)
+        assertEquals(SendResult.ReadOnly, viewClient.sendAgentCommand(AgentCommand.KILL, "a1"))
+        assertTrue(viewSession.guestFrames().none { it.contains("\"t\":\"agent-cmd\"") })
+
+        val idleClient = CollabClient(backgroundScope, FakeTransport(key), random = Random(1))
+        assertEquals(
+            SendResult.NotConnected,
+            idleClient.sendAgentCommand(AgentCommand.KILL, "a1"),
+        )
+    }
+
+    @Test
+    fun queuedCommandsBindToTheActivationTheyWereEnqueuedFor() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        val oldSession = connected(client, transport)
+
+        // The switch is queued but not yet processed when the stale command captures
+        // the old activation id.
+        client.connect(credentials(), "Android")
+        val prompt = async(start = CoroutineStart.UNDISPATCHED) { client.sendPrompt("stale draft") }
+        val transcript = async(start = CoroutineStart.UNDISPATCHED) { client.fetchTranscript("a1", 0) }
+        runCurrent()
+        assertEquals(SendResult.Rejected, prompt.await())
+        assertEquals(TranscriptResult.Unavailable, transcript.await())
+        assertTrue(oldSession.guestFrames().none { it.contains("\"t\":\"prompt\"") })
+        assertEquals(2, transport.sessions.size)
+    }
+
+    @Test
+    fun transcriptRequestsCorrelateByReqIdAndIgnoreStaleReplies() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        val session = connected(client, transport)
+
+        val first = async { client.fetchTranscript("a1", 0) }
+        val second = async { client.fetchTranscript("a2", 128) }
+        runCurrent()
+        val requests = session.guestFrames().filter { it.contains("\"t\":\"fetch-transcript\"") }
+        assertEquals(2, requests.size)
+        val reqIds = requests.map { frame -> frame.reqId() }
+        assertEquals(
+            """{"t":"fetch-transcript","reqId":${reqIds[0]},"agentId":"a1","fromByte":0}""",
+            requests[0],
+        )
+        assertEquals(
+            """{"t":"fetch-transcript","reqId":${reqIds[1]},"agentId":"a2","fromByte":128}""",
+            requests[1],
+        )
+
+        session.deliver("""{"t":"transcript","reqId":999,"text":"stale","newSize":1}""")
+        runCurrent()
+        assertFalse(first.isCompleted)
+        assertFalse(second.isCompleted)
+
+        session.deliver("""{"t":"transcript","reqId":${reqIds[1]},"text":"second","newSize":200}""")
+        session.deliver("""{"t":"transcript","reqId":${reqIds[0]},"text":"first","newSize":128}""")
+        runCurrent()
+        assertEquals(TranscriptResult.Rows("first", 128), first.await())
+        assertEquals(TranscriptResult.Rows("second", 200), second.await())
+
+        // Duplicate replies for consumed reqIds must not disturb anything.
+        session.deliver("""{"t":"transcript","reqId":${reqIds[0]},"text":"again","newSize":256}""")
+        runCurrent()
+    }
+
+    @Test
+    fun transcriptTimeoutAndDisconnectResolvePendingRequests() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        val session = connected(client, transport)
+
+        val pending = async { client.fetchTranscript("a1", 0) }
+        runCurrent()
+        val firstReqId = session.guestFrames().first { it.contains("\"t\":\"fetch-transcript\"") }.reqId()
+        advanceTimeBy(10_001)
+        runCurrent()
+        assertEquals(TranscriptResult.Timeout, pending.await())
+
+        val retry = async { client.fetchTranscript("a1", 0) }
+        runCurrent()
+        val frames = session.guestFrames().filter { it.contains("\"t\":\"fetch-transcript\"") }
+        val retryReqId = frames.last().reqId()
+        assertTrue(retryReqId > firstReqId)
+        // A late reply to the timed-out request must not resolve the retry.
+        session.deliver("""{"t":"transcript","reqId":$firstReqId,"text":"late","newSize":10}""")
+        runCurrent()
+        assertFalse(retry.isCompleted)
+        session.deliver("""{"t":"transcript","reqId":$retryReqId,"text":"ok","newSize":10}""")
+        runCurrent()
+        assertEquals(TranscriptResult.Rows("ok", 10), retry.await())
+
+        val lost = async { client.fetchTranscript("a1", 0) }
+        runCurrent()
+        client.disconnect()
+        runCurrent()
+        assertEquals(TranscriptResult.Unavailable, lost.await())
+    }
+
+    @Test
+    fun viewSessionReadsTranscriptAndHostErrorsAreTyped() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        val session = connected(client, transport, withToken = false)
+
+        assertEquals(TranscriptResult.Rejected, client.fetchTranscript(" ", 0))
+        assertEquals(TranscriptResult.Rejected, client.fetchTranscript("a1", -1))
+
+        val pending = async { client.fetchTranscript("a1", 64) }
+        runCurrent()
+        val reqId = session.guestFrames().first { it.contains("\"t\":\"fetch-transcript\"") }.reqId()
+        session.deliver(
+            """{"t":"transcript","reqId":$reqId,"text":"","newSize":64,"error":"session file missing"}""",
+        )
+        runCurrent()
+        assertEquals(TranscriptResult.HostError("session file missing"), pending.await())
+
+        client.pause()
+        runCurrent()
+        assertEquals(TranscriptResult.Unavailable, client.fetchTranscript("a1", 0))
+    }
+
+    private fun String.reqId(): Long =
+        Regex("\"reqId\":(\\d+)").find(this)!!.groupValues[1].toLong()
+
+    @Test
     fun realOkHttpTransportCompletesHandshake() {
     val key = ByteArray(32) { it.toByte() }
     val hostCipher = RoomCipher.fromKey(key)
     val server = MockWebServer()
+    val closed = CountDownLatch(1)
     server.enqueue(
         MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
@@ -510,6 +708,14 @@ class CollabClientTest {
                         """{"t":"welcome","proto":3,"header":{"id":"s1","title":"Real","cwd":"/w"},"state":{"isStreaming":false,"queuedMessageCount":0,"cwd":"/w","participants":[]},"agents":[],"entryCount":0}"""
                     webSocket.send(ByteString.of(*packEnvelope(0, hostCipher.seal(welcome))))
                 }
+            }
+
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                webSocket.close(1000, "")
+            }
+
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                closed.countDown()
             }
         }),
     )
@@ -533,8 +739,13 @@ class CollabClientTest {
         }
         assertEquals("Real", connected.replica.header?.title)
     } finally {
-        client.disconnect()
-        server.shutdown()
+        try {
+            client.disconnect()
+            assertTrue("WebSocket close handshake did not complete", closed.await(5, TimeUnit.SECONDS))
+        } finally {
+            scope.cancel()
+            server.shutdown()
+        }
     }
 }
 }

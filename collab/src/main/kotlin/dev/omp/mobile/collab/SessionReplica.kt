@@ -27,6 +27,10 @@ data class ReplicaSnapshot(
     val header: SessionHeader? = null,
     val state: SessionState? = null,
     val agents: List<AgentSnapshot> = emptyList(),
+    /** Real `task:subagent:progress` payloads keyed by `progress.id`. */
+    val subagentProgress: Map<String, SubagentProgressPayload> = emptyMap(),
+    /** Real `task:subagent:lifecycle` payloads keyed by lifecycle id. */
+    val subagentLifecycle: Map<String, SubagentLifecyclePayload> = emptyMap(),
     val readOnly: Boolean = false,
     val entries: List<SessionEntry> = emptyList(),
     /** Final tool results keyed by toolCallId, paired globally across the whole journal. */
@@ -54,6 +58,10 @@ class SessionReplica(private val clock: () -> Long = System::currentTimeMillis) 
     private var header: SessionHeader? = null
     private var state: SessionState? = null
     private var agents: List<AgentSnapshot> = emptyList()
+    private var subagentProgress: Map<String, SubagentProgressPayload> = emptyMap()
+    private var subagentLifecycle: Map<String, SubagentLifecyclePayload> = emptyMap()
+    /** Bus ids absent from the latest agents frame; pruned when still absent next frame. */
+    private var unlistedBusIds: Set<String> = emptySet()
     private var readOnly = false
 
     private val entries = mutableListOf<SessionEntry>()
@@ -89,6 +97,9 @@ class SessionReplica(private val clock: () -> Long = System::currentTimeMillis) 
         header = frame.header
         state = frame.state
         agents = frame.agents
+        subagentProgress = emptyMap()
+        subagentLifecycle = emptyMap()
+        unlistedBusIds = emptySet()
         readOnly = frame.readOnly
         stream = null
         streamDone = false
@@ -265,7 +276,57 @@ class SessionReplica(private val clock: () -> Long = System::currentTimeMillis) 
 
     fun onAgents(next: List<AgentSnapshot>) {
         agents = next
+        pruneBusMaps()
         publish()
+    }
+
+    /** Applies mirrored task-subagent bus traffic; unrelated channels are ignored. */
+    fun onBus(channel: String, data: JsonElement?) {
+        when (channel) {
+            "task:subagent:progress" -> {
+                val payload = parseSubagentProgress(data) ?: return
+                subagentProgress = subagentProgress + (payload.progress.id to payload)
+            }
+
+            "task:subagent:lifecycle" -> {
+                val payload = parseSubagentLifecycle(data) ?: return
+                subagentLifecycle = subagentLifecycle + (payload.id to payload)
+            }
+
+            else -> return
+        }
+        publish()
+    }
+
+    /**
+     * Drops bus payloads for agents the host no longer lists. Progress can
+     * arrive before its agent registration, so a missing id survives one
+     * agents frame and is pruned only if the next frame still omits it.
+     */
+    private fun pruneBusMaps() {
+        if (subagentProgress.isEmpty() && subagentLifecycle.isEmpty()) {
+            unlistedBusIds = emptySet()
+            return
+        }
+        val listed = agents.mapTo(HashSet()) { it.id }
+        val previouslyUnlisted = unlistedBusIds
+        val unlisted = HashSet<String>()
+
+        fun <V> prune(map: Map<String, V>): Map<String, V> {
+            val retained = LinkedHashMap<String, V>(map.size)
+            for ((id, value) in map) {
+                if (!listed.contains(id)) {
+                    if (previouslyUnlisted.contains(id)) continue
+                    unlisted += id
+                }
+                retained[id] = value
+            }
+            return retained
+        }
+
+        subagentProgress = prune(subagentProgress)
+        subagentLifecycle = prune(subagentLifecycle)
+        unlistedBusIds = unlisted
     }
 
     fun onUiRequest(request: CollabUiRequest) {
@@ -316,6 +377,9 @@ class SessionReplica(private val clock: () -> Long = System::currentTimeMillis) 
         header = null
         state = null
         agents = emptyList()
+        subagentProgress = emptyMap()
+        subagentLifecycle = emptyMap()
+        unlistedBusIds = emptySet()
         readOnly = false
         entries.clear()
         entryIndex.clear()
@@ -374,6 +438,8 @@ class SessionReplica(private val clock: () -> Long = System::currentTimeMillis) 
         header = header,
         state = state,
         agents = agents,
+        subagentProgress = subagentProgress,
+        subagentLifecycle = subagentLifecycle,
         readOnly = readOnly,
         entries = publishedEntries,
         toolResults = publishedToolResults,

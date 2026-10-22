@@ -207,6 +207,45 @@ data class AgentSnapshot(
     val lastActivity: Long = 0,
 )
 
+// ── Subagent bus payloads (task:subagent:progress / task:subagent:lifecycle) ─
+
+/** Subset of the host's `AgentProgress` that the guest panel renders. */
+data class AgentProgress(
+    val id: String,
+    val agent: String,
+    val status: String,
+    val task: String,
+    val description: String?,
+    val lastIntent: String?,
+    val currentTool: String?,
+    val currentToolIntent: String?,
+    val toolCount: Int,
+    val tokens: Long,
+    val durationMs: Long,
+    val resolvedModel: String?,
+    val recentOutput: List<String>,
+)
+
+data class SubagentProgressPayload(
+    val index: Int,
+    val agent: String,
+    val task: String,
+    val parentToolCallId: String?,
+    val assignment: String?,
+    val progress: AgentProgress,
+    val sessionFile: String?,
+)
+
+data class SubagentLifecyclePayload(
+    val id: String,
+    val agent: String,
+    val description: String?,
+    val status: String,
+    val sessionFile: String?,
+    val parentToolCallId: String?,
+    val index: Int,
+)
+
 // ── UI requests ────────────────────────────────────────────────────────────
 
 data class SelectOption(val label: String, val description: String?)
@@ -305,16 +344,31 @@ sealed interface HostFrame {
     data class AgentsFrame(val agents: List<AgentSnapshot>) : HostFrame
     data class UiRequestFrame(val request: CollabUiRequest) : HostFrame
     data class UiRequestEnd(val reqId: Long) : HostFrame
+    data class Transcript(val reqId: Long, val text: String, val newSize: Long, val error: String?) : HostFrame
     data class Bye(val reason: String) : HostFrame
     data class Error(val message: String) : HostFrame
     data class Unknown(val type: String?) : HostFrame
 }
 
+data class PromptImage(val data: String, val mimeType: String) {
+    /** Never let logs or crash reports dump inline image content. */
+    override fun toString(): String = "PromptImage(data=<redacted>, mimeType=$mimeType)"
+}
+
+/** Commands the host accepts for a listed subagent. */
+enum class AgentCommand(val wire: String) {
+    CHAT("chat"),
+    KILL("kill"),
+    REVIVE("revive"),
+}
+
 sealed interface GuestFrame {
     data class Hello(val name: String, val writeToken: String?) : GuestFrame
-    data class Prompt(val text: String) : GuestFrame
+    data class Prompt(val text: String, val images: List<PromptImage> = emptyList()) : GuestFrame
     data class UiResponse(val reqId: Long, val value: String?) : GuestFrame
     data object Abort : GuestFrame
+    data class AgentCmd(val command: AgentCommand, val agentId: String, val text: String?) : GuestFrame
+    data class FetchTranscript(val reqId: Long, val agentId: String, val fromByte: Long) : GuestFrame
 }
 
 @Serializable
@@ -326,7 +380,20 @@ private data class HelloDto(
 )
 
 @Serializable
-private data class PromptDto(val t: String, val text: String)
+private data class PromptImageDto(
+    val type: String = "image",
+    val data: String,
+    val mimeType: String,
+) {
+    override fun toString(): String = "PromptImageDto(type=$type, data=<redacted>, mimeType=$mimeType)"
+}
+
+@Serializable
+private data class PromptDto(
+    val t: String,
+    val text: String,
+    val images: List<PromptImageDto>? = null,
+)
 
 @Serializable
 private data class UiResponseDto(val t: String, val reqId: Long, val value: String? = null)
@@ -334,17 +401,58 @@ private data class UiResponseDto(val t: String, val reqId: Long, val value: Stri
 @Serializable
 private data class AbortDto(val t: String)
 
+@Serializable
+private data class AgentCmdDto(
+    val t: String,
+    val cmd: String,
+    val agentId: String,
+    val text: String? = null,
+)
+
+@Serializable
+private data class FetchTranscriptDto(
+    val t: String,
+    val reqId: Long,
+    val agentId: String,
+    val fromByte: Long,
+)
+
 fun encodeGuestFrame(frame: GuestFrame): String = when (frame) {
     is GuestFrame.Hello -> WireJson.encodeToString(
         HelloDto(t = "hello", proto = COLLAB_PROTO, name = frame.name, writeToken = frame.writeToken),
     )
 
-    is GuestFrame.Prompt -> WireJson.encodeToString(PromptDto(t = "prompt", text = frame.text))
+    is GuestFrame.Prompt -> WireJson.encodeToString(
+        PromptDto(
+            t = "prompt",
+            text = frame.text,
+            images = frame.images.takeIf { it.isNotEmpty() }
+                ?.map { PromptImageDto(data = it.data, mimeType = it.mimeType) },
+        ),
+    )
     is GuestFrame.UiResponse -> WireJson.encodeToString(
         UiResponseDto(t = "ui-response", reqId = frame.reqId, value = frame.value),
     )
 
     GuestFrame.Abort -> WireJson.encodeToString(AbortDto(t = "abort"))
+
+    is GuestFrame.AgentCmd -> WireJson.encodeToString(
+        AgentCmdDto(
+            t = "agent-cmd",
+            cmd = frame.command.wire,
+            agentId = frame.agentId,
+            text = frame.text.takeIf { frame.command == AgentCommand.CHAT },
+        ),
+    )
+
+    is GuestFrame.FetchTranscript -> WireJson.encodeToString(
+        FetchTranscriptDto(
+            t = "fetch-transcript",
+            reqId = frame.reqId,
+            agentId = frame.agentId,
+            fromByte = frame.fromByte,
+        ),
+    )
 }
 
 /**
@@ -408,7 +516,18 @@ fun parseHostFrame(text: String, fallbackEntryId: String = "unknown-entry"): Hos
             HostFrame.UiRequestEnd(reqId)
         }
 
-        "transcript" -> HostFrame.Unknown(type)
+        "transcript" -> {
+            val reqId = obj.long("reqId") ?: throw WireFormatException("transcript.reqId missing")
+            val error = obj.string("error")
+            val text = obj.string("text")
+            val newSize = obj.long("newSize")
+            if (error == null && (text == null || newSize == null)) {
+                throw WireFormatException("transcript payload missing")
+            }
+            if (newSize != null && newSize < 0) throw WireFormatException("transcript.newSize invalid")
+            HostFrame.Transcript(reqId, text ?: "", newSize ?: 0, error)
+        }
+
         "bye" -> HostFrame.Bye(obj.string("reason") ?: "session ended")
         "error" -> HostFrame.Error(obj.string("message") ?: "host error")
         else -> HostFrame.Unknown(type)
@@ -626,6 +745,56 @@ private fun parseUiRequest(element: JsonElement): CollabUiRequest {
         "editor" -> CollabUiRequest.Editor(reqId, obj.string("title") ?: "", obj.string("prefill"))
         else -> throw WireFormatException("unknown ui request kind: $kind")
     }
+}
+
+/**
+ * Parses a `task:subagent:progress` bus payload. Bus data is best-effort:
+ * malformed payloads are ignored instead of breaking the session.
+ */
+fun parseSubagentProgress(data: JsonElement?): SubagentProgressPayload? {
+    val obj = data as? JsonObject ?: return null
+    val progress = obj["progress"] as? JsonObject ?: return null
+    val id = progress.string("id") ?: return null
+    return SubagentProgressPayload(
+        index = obj.int("index") ?: 0,
+        agent = obj.string("agent") ?: "",
+        task = obj.string("task") ?: "",
+        parentToolCallId = obj.string("parentToolCallId"),
+        assignment = obj.string("assignment"),
+        progress = AgentProgress(
+            id = id,
+            agent = progress.string("agent") ?: "",
+            status = progress.string("status") ?: "",
+            task = progress.string("task") ?: "",
+            description = progress.string("description"),
+            lastIntent = progress.string("lastIntent"),
+            currentTool = progress.string("currentTool"),
+            currentToolIntent = progress.string("currentToolIntent"),
+            toolCount = progress.int("toolCount") ?: 0,
+            tokens = progress.long("tokens") ?: 0,
+            durationMs = progress.long("durationMs") ?: 0,
+            resolvedModel = progress.string("resolvedModel"),
+            recentOutput = (progress["recentOutput"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
+                ?: emptyList(),
+        ),
+        sessionFile = obj.string("sessionFile"),
+    )
+}
+
+/** Parses a `task:subagent:lifecycle` bus payload; malformed data is ignored. */
+fun parseSubagentLifecycle(data: JsonElement?): SubagentLifecyclePayload? {
+    val obj = data as? JsonObject ?: return null
+    val id = obj.string("id") ?: return null
+    return SubagentLifecyclePayload(
+        id = id,
+        agent = obj.string("agent") ?: "",
+        description = obj.string("description"),
+        status = obj.string("status") ?: "",
+        sessionFile = obj.string("sessionFile"),
+        parentToolCallId = obj.string("parentToolCallId"),
+        index = obj.int("index") ?: 0,
+    )
 }
 
 class WireFormatException(message: String, cause: Throwable? = null) : Exception(message, cause)

@@ -242,6 +242,73 @@ class SessionReplicaTest {
     }
 
     @Test
+    fun subagentBusPayloadsAreExposedAndPrunedOnlyAfterAGraceFrame() {
+        val sub = AgentSnapshot(
+            id = "sub1",
+            displayName = "Scout",
+            kind = "sub",
+            parentId = "main",
+            status = "running",
+            hasSessionFile = true,
+        )
+        val replica = SessionReplica()
+        replica.onWelcome(
+            HostFrame.Welcome(
+                proto = COLLAB_PROTO,
+                header = header(),
+                state = state(),
+                agents = listOf(sub),
+                entryCount = 0,
+                readOnly = false,
+            ),
+        )
+        replica.onBus(
+            "task:subagent:progress",
+            WireJson.parseToJsonElement(
+                """{"index":1,"agent":"Scout","task":"find","parentToolCallId":"t1","progress":{"id":"sub1","agent":"Scout","status":"running","task":"find","currentTool":"bash","currentToolIntent":"locate","toolCount":2,"tokens":12,"durationMs":1500,"recentOutput":["one","two"]}}""",
+            ),
+        )
+        replica.onBus(
+            "task:subagent:lifecycle",
+            WireJson.parseToJsonElement(
+                """{"id":"sub1","agent":"Scout","description":"look around","status":"started","index":1}""",
+            ),
+        )
+        replica.onBus("task:subagent:unknown", WireJson.parseToJsonElement("""{"id":"sub1"}"""))
+
+        val snapshot = replica.snapshot()
+        assertEquals("bash", snapshot.subagentProgress["sub1"]?.progress?.currentTool)
+        assertEquals("locate", snapshot.subagentProgress["sub1"]?.progress?.currentToolIntent)
+        assertEquals(listOf("one", "two"), snapshot.subagentProgress["sub1"]?.progress?.recentOutput)
+        assertEquals("started", snapshot.subagentLifecycle["sub1"]?.status)
+
+        replica.onAgents(emptyList())
+        assertEquals("bash", replica.snapshot().subagentProgress["sub1"]?.progress?.currentTool)
+        replica.onAgents(emptyList())
+        assertTrue(replica.snapshot().subagentProgress.isEmpty())
+        assertTrue(replica.snapshot().subagentLifecycle.isEmpty())
+
+        replica.onBus(
+            "task:subagent:progress",
+            WireJson.parseToJsonElement(
+                """{"agent":"Scout","progress":{"id":"sub1","agent":"Scout","status":"running","task":"find"}}""",
+            ),
+        )
+        replica.onWelcome(welcome(0))
+        assertTrue(replica.snapshot().subagentProgress.isEmpty())
+    }
+
+    @Test
+    fun malformedBusPayloadIsIgnored() {
+        val replica = SessionReplica()
+        replica.onWelcome(welcome(0))
+        replica.onBus("task:subagent:progress", WireJson.parseToJsonElement("""{"index":1}"""))
+        replica.onBus("task:subagent:lifecycle", WireJson.parseToJsonElement("[1,2]"))
+        assertTrue(replica.snapshot().subagentProgress.isEmpty())
+        assertTrue(replica.snapshot().subagentLifecycle.isEmpty())
+    }
+
+    @Test
     fun malformedKnownFrameIsAProtocolErrorNotAnEmptyTranscript() {
         val error = kotlin.runCatching { parseHostFrame("""{"t":"welcome","proto":3}""") }.exceptionOrNull()
         assertTrue(error is WireFormatException)
