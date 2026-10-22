@@ -173,10 +173,21 @@ fun ChatScreen(
             ) {
                 if (itemCount == 0) {
                     item("empty") {
-                        Column(Modifier.fillMaxWidth().padding(32.dp)) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(32.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
                             Text(
-                                if (session.status is ConnectionStatus.Syncing) "Syncing transcript…" else "No activity yet",
-                                style = MaterialTheme.typography.bodyMedium,
+                                if (session.status is ConnectionStatus.Syncing) {
+                                    "Syncing transcript…"
+                                } else {
+                                    "No transcript yet"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                "The host will stream entries here as the agent works.",
+                                style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }

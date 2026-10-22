@@ -154,7 +154,7 @@ fun SessionsScreen(
                                     label = { Text(pairing.accessLabel) },
                                 )
                             }
-                            Text(pairing.relayHost, style = MaterialTheme.typography.bodySmall)
+                            Text("${pairing.relayHost} · room ${pairing.roomId}", style = MaterialTheme.typography.bodySmall)
                             Text(
                                 if (selected) "Selected pairing" else "Saved pairing",
                                 style = MaterialTheme.typography.labelSmall,
@@ -169,7 +169,7 @@ fun SessionsScreen(
                                     shape = CircleShape,
                                 ) { Text(if (selected) "Active" else "Open") }
                                 TextButton(onClick = { renameTarget = pairing }) { Text("Rename") }
-                                TextButton(onClick = { forgetTarget = pairing }) { Text("Delete local") }
+                                TextButton(onClick = { forgetTarget = pairing }) { Text("Remove") }
                             }
                         }
                     }
