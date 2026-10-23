@@ -16,7 +16,8 @@ android {
         applicationId = "dev.omp.mobile"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
+        // Increment for each APK build, not for each source edit.
+        versionCode = 5
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

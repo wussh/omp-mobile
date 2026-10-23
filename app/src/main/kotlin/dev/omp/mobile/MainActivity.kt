@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.widthIn
@@ -176,7 +177,7 @@ private fun OmpApp(
                     }
                 },
             ) { padding ->
-                Row(Modifier.fillMaxSize().padding(padding)) {
+                Row(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                     if (expanded) {
                         NavigationRail(
                             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,

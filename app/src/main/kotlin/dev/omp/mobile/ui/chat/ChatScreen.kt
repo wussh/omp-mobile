@@ -10,33 +10,40 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -44,7 +51,6 @@ import androidx.compose.material3.LoadingIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +58,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -59,11 +66,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.omp.mobile.R
 import dev.omp.mobile.collab.ActiveTool
 import dev.omp.mobile.collab.BranchSummaryEntry
@@ -107,11 +117,16 @@ fun ChatScreen(
         replica.entries.filter { it.isRenderable() }
     }
     val listState = rememberLazyListState()
-    var followTail by remember { mutableStateOf(true) }
-    LaunchedEffect(listState) {
-        snapshotFlow { listState.isScrollInProgress }.collect { scrolling ->
-            if (scrolling) followTail = !listState.canScrollForward
-        }
+    val scope = rememberCoroutineScope()
+    val dragging by listState.interactionSource.collectIsDraggedAsState()
+    var followTail by remember(session.pairingId) { mutableStateOf(true) }
+    LaunchedEffect(listState, session.pairingId) {
+        snapshotFlow { Triple(dragging, listState.isScrollInProgress, listState.canScrollForward) }
+            .distinctUntilChanged()
+            .collect { (userDragging, scrolling, canScrollForward) ->
+                if (userDragging) followTail = !canScrollForward
+                else if (!scrolling && !canScrollForward) followTail = true
+            }
     }
 
     val committedToolIds = remember(replica.entries) {
@@ -134,8 +149,10 @@ fun ChatScreen(
     val itemCount = entries.size + (if (hasStream) 1 else 0) + (if (tailTools.isNotEmpty()) 1 else 0) +
         (if (showWorking) 1 else 0)
 
-    LaunchedEffect(itemCount, replica.stream, replica.working) {
-        if (followTail && itemCount > 0) listState.scrollToItem(itemCount - 1)
+    LaunchedEffect(itemCount, replica.stream, replica.activeTools, replica.toolResults, replica.working) {
+        if (followTail && !dragging && itemCount > 0) {
+            listState.scrollToLatest(lastIndex = itemCount - 1, animate = false)
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -186,91 +203,104 @@ fun ChatScreen(
             }
 
             AgentControls(agentControlsViewModel)
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                if (itemCount == 0) {
-                    item("empty") {
-                        Column(
-                            Modifier.fillMaxWidth().padding(32.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            Text(
-                                if (session.status is ConnectionStatus.Syncing) {
-                                    "Syncing transcript…"
-                                } else {
-                                    "No transcript yet"
-                                },
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                "The host will stream entries here as the agent works.",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                    }
-                }
-                items(entries, key = { it.id }) { entry ->
-                    Box(Modifier.animateItem()) {
-                        JournalRow(entry, replica.toolResults, replica.activeTools, latestTodoCallId)
-                    }
-                }
-                if (hasStream) {
-                    item(key = "stream-ghost") {
-                        Box(Modifier.animateItem()) {
-                            AssistantRow(
-                                message = replica.stream!!,
-                                results = replica.toolResults,
-                                active = replica.activeTools,
-                                pending = !replica.streamDone,
-                                latestTodoCallId = latestTodoCallId,
-                            )
-                        }
-                    }
-                }
-                if (tailTools.isNotEmpty()) {
-                    item(key = "active-tools") {
-                        Column(
-                            Modifier.animateItem(),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            tailTools.forEach { tool ->
-                                ToolCard(
-                                    toolCallId = tool.toolCallId,
-                                    name = tool.toolName,
-                                    intent = tool.intent,
-                                    args = tool.args,
-                                    partialResult = tool.partialResult,
-                                    result = replica.toolResults[tool.toolCallId],
-                                    running = true,
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (itemCount == 0) {
+                        item("empty") {
+                            Column(
+                                Modifier.fillMaxWidth().padding(32.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                Text(
+                                    if (session.status is ConnectionStatus.Syncing) {
+                                        "Syncing transcript…"
+                                    } else {
+                                        "No transcript yet"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    "The host will stream entries here as the agent works.",
+                                    style = MaterialTheme.typography.bodySmall,
                                 )
                             }
                         }
                     }
-                }
-                if (showWorking) {
-                    item(key = "working") {
-                        Row(
-                            Modifier.animateItem().padding(vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            ActivityIndicator(Modifier.size(18.dp))
-                            Text("thinking…", style = MaterialTheme.typography.bodySmall)
+                    items(entries, key = { it.id }) { entry ->
+                        Box(Modifier.animateItem()) {
+                            JournalRow(entry, replica.toolResults, replica.activeTools, latestTodoCallId)
+                        }
+                    }
+                    if (hasStream) {
+                        item(key = "stream-ghost") {
+                            Box(Modifier.animateItem()) {
+                                AssistantRow(
+                                    message = replica.stream!!,
+                                    results = replica.toolResults,
+                                    active = replica.activeTools,
+                                    pending = !replica.streamDone,
+                                    latestTodoCallId = latestTodoCallId,
+                                )
+                            }
+                        }
+                    }
+                    if (tailTools.isNotEmpty()) {
+                        item(key = "active-tools") {
+                            Column(
+                                Modifier.animateItem(),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                tailTools.forEach { tool ->
+                                    ToolCard(
+                                        toolCallId = tool.toolCallId,
+                                        name = tool.toolName,
+                                        intent = tool.intent,
+                                        args = tool.args,
+                                        partialResult = tool.partialResult,
+                                        result = replica.toolResults[tool.toolCallId],
+                                        running = true,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (showWorking) {
+                        item(key = "working") {
+                            Row(
+                                Modifier.animateItem().padding(vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                ActivityIndicator(Modifier.size(18.dp))
+                                Text("thinking…", style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 }
-            }
 
-            if (!followTail) {
-                SmallFloatingActionButton(
-                    onClick = { followTail = true },
-                    modifier = Modifier.align(Alignment.End).padding(end = 16.dp, bottom = 8.dp),
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !followTail && listState.canScrollForward,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp),
+                    enter = fadeIn(tween(150)) + scaleIn(tween(150), initialScale = 0.85f),
+                    exit = fadeOut(tween(100)) + scaleOut(tween(100), targetScale = 0.85f),
                 ) {
-                    Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = "Back to latest")
+                    ExtendedFloatingActionButton(
+                        onClick = {
+                            followTail = true
+                            scope.launch { listState.scrollToLatest(lastIndex = itemCount - 1, animate = true) }
+                        },
+                        icon = {
+                            Icon(painterResource(R.drawable.ic_arrow_down), contentDescription = null)
+                        },
+                        text = { Text("Back to latest") },
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
                 }
             }
 
@@ -396,8 +426,7 @@ private fun Composer(
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
             .imePadding()
-            .navigationBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+            .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         if (!session.canMutate) {
@@ -454,7 +483,15 @@ private fun Composer(
                 }
             }
         }
-        Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.extraLarge)
+                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                .padding(4.dp),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             IconButton(
                 onClick = {
                     imagePicker.launch(
@@ -463,30 +500,42 @@ private fun Composer(
                 },
                 enabled = session.hasWriteToken && !session.readOnly && session.pairingId != null &&
                     attachments.size < MAX_PROMPT_IMAGES && !preparingImages && !sendingPrompt,
-                modifier = Modifier.size(52.dp),
+                modifier = Modifier.size(48.dp),
             ) {
                 Icon(
                     painter = painterResource(R.drawable.ic_image),
                     contentDescription = "Attach images",
                 )
             }
-            OutlinedTextField(
+            BasicTextField(
                 value = draft,
                 onValueChange = onDraft,
-                modifier = Modifier.weight(1f),
-                placeholder = {
-                    Text(if (attachments.isEmpty()) "Message the host…" else "Add a message (optional)…")
-                },
+                modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 14.dp),
                 enabled = session.canMutate,
                 minLines = 1,
                 maxLines = 6,
-                shape = MaterialTheme.shapes.extraLarge,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = MaterialTheme.colorScheme.onSurface,
+                ),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                decorationBox = { innerTextField ->
+                    Box {
+                        if (draft.isEmpty()) {
+                            Text(
+                                if (attachments.isEmpty()) "Message the host…" else "Add a message…",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        innerTextField()
+                    }
+                },
             )
             Button(
                 onClick = onSend,
                 enabled = session.canMutate && (draft.isNotBlank() || attachments.isNotEmpty()) &&
                     !preparingImages && !sendingPrompt,
-                modifier = Modifier.size(52.dp),
+                modifier = Modifier.size(48.dp),
                 shape = CircleShape,
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
             ) {
@@ -499,7 +548,7 @@ private fun Composer(
                 FilledTonalButton(
                     onClick = onInterrupt,
                     enabled = !interruptPending,
-                    modifier = Modifier.size(52.dp),
+                    modifier = Modifier.size(48.dp),
                     shape = CircleShape,
                     contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
                 ) {
@@ -513,6 +562,16 @@ private fun Composer(
         if (interruptPending) {
             Text("Waiting for the host to stop…", style = MaterialTheme.typography.labelSmall)
         }
+    }
+}
+
+private suspend fun LazyListState.scrollToLatest(lastIndex: Int, animate: Boolean) {
+    if (lastIndex < 0) return
+    if (animate) animateScrollToItem(lastIndex) else scrollToItem(lastIndex)
+    val last = layoutInfo.visibleItemsInfo.lastOrNull { it.index == lastIndex } ?: return
+    val overflow = last.offset + last.size - (layoutInfo.viewportEndOffset - layoutInfo.afterContentPadding)
+    if (overflow > 0) {
+        if (animate) animateScrollBy(overflow.toFloat()) else scrollBy(overflow.toFloat())
     }
 }
 
