@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.omp.mobile.collab.CollabLinkTest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-23T14:26:28.774Z" hostname="android-builder" time="0.042">
+  <properties/>
+  <testcase name="ipv6AndCustomPortsAreCanonicalized" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.006"/>
+  <testcase name="invalidSecretSizesAreRejected" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.002"/>
+  <testcase name="bareAndLegacyBareUseDefaultRelay" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <testcase name="dotJoinedWebDeepLink" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.0"/>
+  <testcase name="directLegacyLinksAndPercentEncodedHash" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.002"/>
+  <testcase name="webDeepLinks" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <testcase name="viewSecretHasNoWriteToken" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <testcase name="formatRoundTripsForRepositoryPairing" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.022"/>
+  <testcase name="invalidAlphabetAndMissingKeyAreRejected" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <testcase name="errorMessagesNeverContainTheSecret" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.0"/>
+  <testcase name="envelopeRoundTripAndGuestPrefix" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <testcase name="plainWsOnlyForLocalhost" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <testcase name="wrapperFragmentsWinOverOuterPaths" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <testcase name="publicControlLinkFromPlan" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.0"/>
+  <testcase name="schemeLessRelayInfersWss" classname="dev.omp.mobile.collab.CollabLinkTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

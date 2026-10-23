@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.omp.mobile.collab.CollabClientTest" tests="38" skipped="0" failures="0" errors="0" timestamp="2026-10-23T14:26:26.726Z" hostname="android-builder" time="1.998">
+  <properties/>
+  <testcase name="entriesBeforeWelcomeAreIgnored" classname="dev.omp.mobile.collab.CollabClientTest" time="0.184"/>
+  <testcase name="pendingPromptsSurvivePauseNetworkAndManualRetryButWaitForWritableWelcome" classname="dev.omp.mobile.collab.CollabClientTest" time="0.018"/>
+  <testcase name="protocolMismatchAndBadFramesAreTerminal" classname="dev.omp.mobile.collab.CollabClientTest" time="0.007"/>
+  <testcase name="transcriptRequestsCorrelateByReqIdAndIgnoreStaleReplies" classname="dev.omp.mobile.collab.CollabClientTest" time="0.015"/>
+  <testcase name="unexpectedCloseRetriesAndPromptIsNotReplayed" classname="dev.omp.mobile.collab.CollabClientTest" time="0.006"/>
+  <testcase name="viewSessionReadsTranscriptAndHostErrorsAreTyped" classname="dev.omp.mobile.collab.CollabClientTest" time="0.009"/>
+  <testcase name="pendingPromptsWaitForFinalSnapshotAndDrainFifoWithImages" classname="dev.omp.mobile.collab.CollabClientTest" time="0.01"/>
+  <testcase name="pendingCapacityAndExplicitCancellationAreObservable" classname="dev.omp.mobile.collab.CollabClientTest" time="0.352"/>
+  <testcase name="promptAndInterruptAreQueuedExactlyOnce" classname="dev.omp.mobile.collab.CollabClientTest" time="0.008"/>
+  <testcase name="pendingPromptsNeverCrossCredentialChangesAndStaleActivationIsRejected" classname="dev.omp.mobile.collab.CollabClientTest" time="0.004"/>
+  <testcase name="selectAndEditorResponsesUseExactStringsAndOneShot" classname="dev.omp.mobile.collab.CollabClientTest" time="0.035"/>
+  <testcase name="uiRequestEndOfQueuedRequestDoesNotDismissActiveOne" classname="dev.omp.mobile.collab.CollabClientTest" time="0.005"/>
+  <testcase name="readOnlyDefensivelyIgnoresUiRequests" classname="dev.omp.mobile.collab.CollabClientTest" time="0.003"/>
+  <testcase name="reconnectDiagnosticsDoNotLogRemoteCloseReasonOrStreamingContent" classname="dev.omp.mobile.collab.CollabClientTest" time="0.047"/>
+  <testcase name="textRoomClosedIsOnlyAHint" classname="dev.omp.mobile.collab.CollabClientTest" time="0.004"/>
+  <testcase name="queuedCommandsBindToTheActivationTheyWereEnqueuedFor" classname="dev.omp.mobile.collab.CollabClientTest" time="0.005"/>
+  <testcase name="welcomeWithoutSnapshotIsConnectedOnlyAfterHandshake" classname="dev.omp.mobile.collab.CollabClientTest" time="0.003"/>
+  <testcase name="welcomeTimeoutRetriesWithBackoff" classname="dev.omp.mobile.collab.CollabClientTest" time="0.002"/>
+  <testcase name="realOkHttpTransportCompletesHandshake" classname="dev.omp.mobile.collab.CollabClientTest" time="0.374"/>
+  <testcase name="joinsHostSnapshotContainingInternalMessageRoles" classname="dev.omp.mobile.collab.CollabClientTest" time="0.004"/>
+  <testcase name="pendingAggregatePayloadIsBoundedAndNonPromptMutationsAreNotRetained" classname="dev.omp.mobile.collab.CollabClientTest" time="0.731"/>
+  <testcase name="pendingPromptsDrainWhenAdvertisedSnapshotCompletesWithoutFinal" classname="dev.omp.mobile.collab.CollabClientTest" time="0.019"/>
+  <testcase name="snapshotProgressRequiresEveryEntryOrDefaultFinal" classname="dev.omp.mobile.collab.CollabClientTest" time="0.005"/>
+  <testcase name="falseSendRetainsPromptWhileUncertainSendDoesNotReplay" classname="dev.omp.mobile.collab.CollabClientTest" time="0.007"/>
+  <testcase name="pausedSessionDoesNotReconnectUntilResume" classname="dev.omp.mobile.collab.CollabClientTest" time="0.004"/>
+  <testcase name="encryptedByeIsTerminalAndDoesNotReconnectOnResume" classname="dev.omp.mobile.collab.CollabClientTest" time="0.021"/>
+  <testcase name="rejectedSocketSendRetainsUnsentPromptUntilResynced" classname="dev.omp.mobile.collab.CollabClientTest" time="0.007"/>
+  <testcase name="manualDisconnectStaysIdle" classname="dev.omp.mobile.collab.CollabClientTest" time="0.002"/>
+  <testcase name="backoffStaysCappedWithoutOverflow" classname="dev.omp.mobile.collab.CollabClientTest" time="0.012"/>
+  <testcase name="parserDiagnosticsExposeLocationWithoutPayloadOrCredentials" classname="dev.omp.mobile.collab.CollabClientTest" time="0.01"/>
+  <testcase name="agentCommandsRequireControlAndSerializeExactlyOnce" classname="dev.omp.mobile.collab.CollabClientTest" time="0.029"/>
+  <testcase name="readOnlyAndTokenlessLinksRejectMutations" classname="dev.omp.mobile.collab.CollabClientTest" time="0.006"/>
+  <testcase name="preWelcomeHostErrorIsJoinRejected" classname="dev.omp.mobile.collab.CollabClientTest" time="0.003"/>
+  <testcase name="networkLossWaitsWithoutHotLoop" classname="dev.omp.mobile.collab.CollabClientTest" time="0.003"/>
+  <testcase name="initialMissingRoomIsTerminal" classname="dev.omp.mobile.collab.CollabClientTest" time="0.026"/>
+  <testcase name="transcriptTimeoutAndDisconnectResolvePendingRequests" classname="dev.omp.mobile.collab.CollabClientTest" time="0.007"/>
+  <testcase name="roomRecreationRaceRecoversThrough4001And4004" classname="dev.omp.mobile.collab.CollabClientTest" time="0.004"/>
+  <testcase name="promptCarriesImagesBesideOptionalText" classname="dev.omp.mobile.collab.CollabClientTest" time="0.002"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

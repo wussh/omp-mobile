@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0 — build 13
+
+- Advance the connection selection generation on every explicit Retry. A pending terminal result from the previous activation can no longer clear the retried session's foreground-service demand or saved pairing, even when retrying the same pairing.
+- Preserve the same-credential prompt outbox and existing no-replay rules; retain the pinned debug signer and package identity.
+
+Verification: a deterministic Android scheduling-barrier smoke reproduced the lost foreground service on the published build 12 APK and passed on build 13, including a subsequent background reconnect. All 105 JVM tests ran fresh and passed; all 13 permanent Android tests passed against build 13 after the temporary race fixture was removed. Signer, package/version, downloaded-vs-pod digest, checksum, and ZIP integrity passed. Raw before/after/suite logs and all six JVM XML reports: `evidence/retry-race/`. Physical-device/API 34+ and process-kill limits remain as described below.
+
 ## 0.1.0 — build 12
 
 - Make both composer/editor containers transparent while preserving keyboard insets and readable controls.

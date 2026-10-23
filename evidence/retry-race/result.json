@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-23",
+  "versionName": "0.1.0",
+  "versionCode": 13,
+  "applicationId": "dev.omp.mobile.debug",
+  "apk": "dist/omp-mobile-0.1.0-debug.apk",
+  "apkSha256": "b9aea2ad4dc679043f35c9b158dde5ff97024c7838d400d6cac03fe9e1a56711",
+  "signerSha256": "33af3bb4d038bd0665ca69087d5b44254fbe2f0c970e4c07eff899f6cf6e0be4",
+  "build": {
+    "context": "tbs-dev",
+    "namespace": "omp-mobile-build",
+    "pod": "android-builder",
+    "result": "BUILD SUCCESSFUL",
+    "jvmTests": {"passed": 105, "failed": 0, "errors": 0, "skipped": 0},
+    "jvmReports": "jvm/TEST-*.xml",
+    "note": "All six JVM suites ran fresh during the build-13 canonical Kubernetes build.",
+    "packagedVersionVerified": true,
+    "pinnedSignerVerified": true,
+    "downloadedDigestMatchesPod": true,
+    "checksumVerified": true,
+    "zipIntegrityVerified": true,
+    "transferNote": "kubectl cp streams failed with unexpected EOF after the successful build. Recovered the APK through bounded binary chunks, verified the complete remote SHA-256 before replacing dist, then checked its checksum and ZIP integrity. No app rebuild was performed for transfer recovery."
+  },
+  "race": {
+    "test": "SameSessionRetrySmoke.sameSessionRetryIgnoresPendingTerminal",
+    "apiLevel": 30,
+    "before": {
+      "versionCode": 12,
+      "sourceCommit": "35f26e02c45b406e50594657b19e8d50a5a6b252",
+      "apkSha256": "5a6e0b7b1af89f92c34a1cb0a0a16a008f7b04e2a79c82ad5921ee9af8b44333",
+      "result": "Expected assertion failure reproduced",
+      "assertion": "Same-session retry lost foreground demand to the stale terminal emission",
+      "junitElapsedSeconds": 41.153,
+      "log": "before.txt"
+    },
+    "after": {
+      "versionCode": 13,
+      "result": "OK (1 test)",
+      "junitElapsedSeconds": 39.47,
+      "log": "after.txt"
+    },
+    "orchestration": [
+      "Join an actual encrypted wire-3 localhost WebSocket fixture through the Activity/Hilt repository",
+      "Hold Main while encrypted bye publishes core Ended, leaving the repository collector pending",
+      "Request retry on Main and hold the core CONNECT_ATTEMPT diagnostic before Connecting publication, preventing StateFlow conflation from hiding the stale terminal",
+      "Drain the pending Main collector, then release the new activation",
+      "Background the Activity and assert an actual foreground service plus Connected status",
+      "Close the retried socket and require another successful reconnect while the UI remains stopped"
+    ],
+    "fix": "Advance the caller-owned sessionSelection tag on every explicit retry, not only on pairing selection. The existing collector rejects the old terminal tag without discarding the same-credential prompt outbox.",
+    "fixtureNote": "Temporary Android instrumentation used reflection only to attach scheduling barriers to the existing diagnostics callback and observe the core StateFlow. It did not replace product state, repository behavior, transport results, or assertions. Removed after the before/after proof; no production test hook or reflection scaffold was committed."
+  },
+  "permanentAndroidSuite": {
+    "appVersionCode": 13,
+    "apiLevel": 30,
+    "image": "aosp_atd;x86_64",
+    "passed": 13,
+    "failed": 0,
+    "junitElapsedSeconds": 83.596,
+    "log": "suite.txt",
+    "note": "Temporary regression fixture was removed and the test APK rebuilt before running the complete permanent suite."
+  },
+  "limits": [
+    "No physical-device visual verification; the ATD image disables drawing",
+    "API 34+ foreground-service policy, OEM battery/Doze behavior, real radio handoff, and sticky process-kill restoration were not exercised",
+    "Runtime fixtures use public test credentials, not a real OMP/model-provider authorization test",
+    "The emulator network stack crashed during initial boot before APK installation; verification resumed only after PackageManager and the replacement system_server/network stack were stable",
+    "Queued prompts remain memory-only; force-stop, process death, and OS battery restrictions can stop or defer background operation"
+  ]
+}

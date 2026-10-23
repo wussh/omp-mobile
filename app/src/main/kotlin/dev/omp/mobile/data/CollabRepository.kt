@@ -352,6 +352,7 @@ class DefaultCollabRepository @Inject constructor(
             return
         }
         selectionRevision++
+        sessionSelection++
         autoConnectWanted = true
         scope.launch { store.setLastPairingId(target.id) }
         client.connect(credentials, _nickname.value, selection = sessionSelection)

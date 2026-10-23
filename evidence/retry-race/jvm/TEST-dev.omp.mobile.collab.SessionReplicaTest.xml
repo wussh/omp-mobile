@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.omp.mobile.collab.SessionReplicaTest" tests="16" skipped="0" failures="0" errors="0" timestamp="2026-10-23T14:26:28.819Z" hostname="android-builder" time="0.009">
+  <properties/>
+  <testcase name="malformedBusPayloadIsIgnored" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.001"/>
+  <testcase name="repeatedIdUpsertsInPlace" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="emptySnapshotClearsLedger" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.001"/>
+  <testcase name="uiRequestsQueueAndDismissWithoutSendingCancel" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="messageUpdateReplacesFullGhostInsteadOfAppending" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="incompleteSnapshotIsDroppedOnNewWelcome" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="readOnlyReplicaIgnoresUiRequests" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="unknownEntryCountsTowardProgressButIsNotRendered" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.001"/>
+  <testcase name="idleStateClearsDanglingToolOverlayAndFinishedGhost" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.001"/>
+  <testcase name="malformedKnownFrameIsAProtocolErrorNotAnEmptyTranscript" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="subagentBusPayloadsAreExposedAndPrunedOnlyAfterAGraceFrame" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.002"/>
+  <testcase name="durableAssistantClearsGhostEvenWithoutMessageEnd" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="snapshotStaysAtomicAndAppliesLiveEntriesAfterPromotion" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.001"/>
+  <testcase name="toolResultPairsGloballyBeyondWindow" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.001"/>
+  <testcase name="differentIdentityDoesNotClearActiveStream" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.0"/>
+  <testcase name="clearDropsEverythingForAnotherPairing" classname="dev.omp.mobile.collab.SessionReplicaTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

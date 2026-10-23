@@ -2,7 +2,7 @@
 
 > Catatan implementasi saat ini: APK debug memakai package `dev.omp.mobile.debug` dan label **OMP Mobile Debug**, terpisah dari aplikasi lama `dev.omp.mobile`. Namespace Kotlin tetap `dev.omp.mobile`. Gunakan `scripts/build-debug-kube.sh` dengan signing key persisten; jangan membuat debug keystore baru di pod sementara. Rincian toolchain awal di bawah merupakan baseline rencana.
 
-## Perilaku saat ini — build 12
+## Perilaku saat ini — build 13
 
 Kebijakan **foreground-only** dan larangan seluruh antrean prompt pada baseline rencana di bawah telah diganti oleh perilaku berikut. Larangan replay perintah yang sudah dikirim tetap berlaku.
 
@@ -12,10 +12,10 @@ Kebijakan **foreground-only** dan larangan seluruh antrean prompt pada baseline 
 - Retry/resume/pergantian jaringan dengan kredensial sama mempertahankan antrean. Disconnect, forget, status terminal, atau pergantian relay/room/key/token membatalkannya dengan pemberitahuan. Welcome read-only menahan antrean lama dan menolak kiriman baru sampai akses writable pulih.
 - `PendingConnection` berarti diterima antrean lokal; `Queued` berarti diterima socket, bukan ACK host. `send=false` boleh dicoba lagi karena belum diterima socket. `send=true` atau exception dengan hasil pengiriman tidak pasti tidak direplay otomatis. Interrupt, respons dialog, dan perintah agen tidak diantrekan offline.
 - Sesi yang diinginkan memakai foreground service `remoteMessaging`, notifikasi ongoing, serta aksi Open/Disconnect. Runtime dan satu default-network callback tetap aktif saat UI berhenti selama service benar-benar berjalan. Penolakan start/promotion Android tidak dianggap sebagai service aktif. Tidak ada wake lock, boot receiver, atau permintaan pengecualian baterai.
-- Pergantian sesi memakai generation tag agar hasil terminal sesi lama tidak menghentikan sesi baru. Pemulihan storage yang sudah usang dibatalkan oleh pilihan/disconnect pengguna. Retry langsung setelah Disconnect tidak kehilangan keinginan koneksi saat service lama sedang berhenti.
+- Pergantian sesi dan setiap Retry manual memajukan generation tag agar hasil terminal aktivasi lama tidak menghentikan koneksi yang baru diminta, termasuk Retry pada pairing yang sama. Pemulihan storage yang sudah usang dibatalkan oleh pilihan/disconnect pengguna. Retry langsung setelah Disconnect tidak kehilangan keinginan koneksi saat service lama sedang berhenti.
 - Force-stop, process death, Doze, dan kebijakan baterai/OEM tetap dapat menghentikan atau menunda koneksi. Prompt di RAM hilang jika proses mati; tidak ada klaim selalu terhubung atau exactly-once.
 
-Verifikasi build 12: 105 tes JVM lulus; 13 tes instrumented Android lulus pada API 30, termasuk reconnect saat proses UI stopped, FIFO setelah snapshot, larangan replay, Disconnect notifikasi, serta disconnect/retry cepat dan service recreation. Signer persisten, digest APK remote/lokal, checksum, dan integritas ZIP cocok. Lihat `evidence/background-queue/`. Fixture runtime memakai AES-GCM wire-3 dengan kredensial uji, bukan OMP/provider nyata. Visual perangkat fisik, kebijakan FGS API 34+, handoff radio nyata, dan sticky restart setelah process kill belum diuji; image ATD mematikan drawing.
+Verifikasi build 13: 105 tes JVM fresh dan 13 tes instrumented Android lulus pada API 30, termasuk reconnect saat proses UI stopped, FIFO setelah snapshot, larangan replay, Disconnect notifikasi, serta disconnect/retry cepat dan service recreation. Smoke race deterministik gagal pada APK build 12 dan lulus pada build 13: terminal lama yang tertunda tidak lagi mematikan foreground service setelah Retry pada pairing sama. Signer persisten, digest APK remote/lokal, checksum, dan integritas ZIP cocok. Lihat `evidence/retry-race/`; bukti historis build 12 tetap di `evidence/background-queue/`. Fixture runtime memakai AES-GCM wire-3 dengan kredensial uji, bukan OMP/provider nyata. Visual perangkat fisik, kebijakan FGS API 34+, handoff radio nyata, dan sticky restart setelah process kill belum diuji; image ATD mematikan drawing.
 
 
 ## Context

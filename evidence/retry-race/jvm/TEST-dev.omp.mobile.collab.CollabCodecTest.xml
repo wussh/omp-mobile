@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.omp.mobile.collab.CollabCodecTest" tests="17" skipped="0" failures="0" errors="0" timestamp="2026-10-23T14:26:28.728Z" hostname="android-builder" time="0.01">
+  <properties/>
+  <testcase name="rejectsTruncatedFrame" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.002"/>
+  <testcase name="cancelResponseOmitsNullValue" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="unsupportedBlocksDoNotDiscardKnownUserOrToolResultContent" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.001"/>
+  <testcase name="rejectsTamperedCiphertext" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.001"/>
+  <testcase name="decryptsCodingAgentInteropVector" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="helloFrameOmitsMissingTokenAndKeepsProto" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="reEncryptsGoldenBytesWithGoldenIv" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.002"/>
+  <testcase name="malformedMessagesAndBlocksRemainProtocolErrors" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.001"/>
+  <testcase name="roundTripsRandomIv" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="providerReplayBlocksDoNotDiscardRenderableAssistantContent" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.001"/>
+  <testcase name="fetchTranscriptCarriesRequestCursor" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="agentCommandsUseTypedWireNamesAndOmitUnusedText" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="promptWithImagesUsesWireImageContent" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="malformedTranscriptResponseIsAFormatError" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.001"/>
+  <testcase name="promptImageToStringRedactsInlineData" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="transcriptResponseParsesRowsAndHostError" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <testcase name="rejectsWrongKey" classname="dev.omp.mobile.collab.CollabCodecTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

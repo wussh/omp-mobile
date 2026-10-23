@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.omp.mobile.collab.AdvisorPresentationTest" tests="14" skipped="0" failures="0" errors="0" timestamp="2026-10-23T14:26:26.590Z" hostname="android-builder" time="0.1">
+  <properties/>
+  <testcase name="advisoryLookingLinesInsideFencedCodeArePreserved" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.039"/>
+  <testcase name="unknownSeverityStaysRawInsteadOfBeingFabricated" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.054"/>
+  <testcase name="emptyNotesArrayFallsBackToContent" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <testcase name="legacyBatchUnwrapsEveryAdvisoryAndKeepsMarkdown" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.001"/>
+  <testcase name="malformedDetailsFallBackToWrappedContent" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <testcase name="noHostTextProducesAnEmptyCard" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <testcase name="proseOutsideAdvisoriesIsNotDropped" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.001"/>
+  <testcase name="blockCountsWorstSeverity" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <testcase name="blockContentIgnoresNonTextBlocks" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.001"/>
+  <testcase name="partiallyMalformedDetailsKeepReadableNotesWhenBodyIsMissing" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.001"/>
+  <testcase name="structuredNotesWinOverContentAndKeepMetadata" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <testcase name="contentWithoutWrappersIsStillReadable" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <testcase name="structuredNoteTextIsPreservedVerbatim" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <testcase name="unterminatedAdvisoryKeepsItsBody" classname="dev.omp.mobile.collab.AdvisorPresentationTest" time="0.0"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="dev.omp.mobile.collab.AsyncResultPresentationTest" tests="5" skipped="0" failures="0" errors="0" timestamp="2026-10-23T14:26:26.710Z" hostname="android-builder" time="0.008">
+  <properties/>
+  <testcase name="hostEnvelopeDoesNotHideNestedJobOutput" classname="dev.omp.mobile.collab.AsyncResultPresentationTest" time="0.006"/>
+  <testcase name="windowsLineEndingsKeepTheResultReadable" classname="dev.omp.mobile.collab.AsyncResultPresentationTest" time="0.0"/>
+  <testcase name="ordinaryOutputAndTagLookingCodeAreNotStripped" classname="dev.omp.mobile.collab.AsyncResultPresentationTest" time="0.0"/>
+  <testcase name="malformedEnvelopeStillShowsAllAvailableOutput" classname="dev.omp.mobile.collab.AsyncResultPresentationTest" time="0.0"/>
+  <testcase name="emptyHostEnvelopeHasNoDisplayableOutput" classname="dev.omp.mobile.collab.AsyncResultPresentationTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

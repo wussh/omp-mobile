@@ -3,7 +3,7 @@
   "versionName": "0.1.0",
   "versionCode": 12,
   "applicationId": "dev.omp.mobile.debug",
-  "apk": "dist/omp-mobile-0.1.0-debug.apk",
+  "apk": "https://github.com/wussh/omp-mobile/raw/35f26e02c45b406e50594657b19e8d50a5a6b252/dist/omp-mobile-0.1.0-debug.apk",
   "apkSha256": "5a6e0b7b1af89f92c34a1cb0a0a16a008f7b04e2a79c82ad5921ee9af8b44333",
   "signerSha256": "33af3bb4d038bd0665ca69087d5b44254fbe2f0c970e4c07eff899f6cf6e0be4",
   "build": {
