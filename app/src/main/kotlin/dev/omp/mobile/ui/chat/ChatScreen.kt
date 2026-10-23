@@ -520,13 +520,8 @@ private fun Composer(
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
         ) {
-            Text(
-                "Foreground only · no delivery ACK",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f),
-            )
             TextButton(
                 onClick = onOpenDetails,
                 modifier = Modifier
