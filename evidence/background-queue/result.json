@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-23",
+  "versionName": "0.1.0",
+  "versionCode": 12,
+  "applicationId": "dev.omp.mobile.debug",
+  "apk": "dist/omp-mobile-0.1.0-debug.apk",
+  "apkSha256": "5a6e0b7b1af89f92c34a1cb0a0a16a008f7b04e2a79c82ad5921ee9af8b44333",
+  "signerSha256": "33af3bb4d038bd0665ca69087d5b44254fbe2f0c970e4c07eff899f6cf6e0be4",
+  "build": {
+    "context": "tbs-dev",
+    "namespace": "omp-mobile-build",
+    "pod": "android-builder",
+    "gradleTasks": [":app:assembleDebug", ":app:assembleDebugAndroidTest", ":collab:testDebugUnitTest"],
+    "result": "BUILD SUCCESSFUL",
+    "jvmTests": {"passed": 105, "failed": 0, "errors": 0, "skipped": 0},
+    "jvmReportNote": "Core suite ran successfully for the final collab sources in build 11; build 12 reused those unchanged-source passing results.",
+    "apkSignerVerified": true,
+    "remoteAndDownloadedApkDigestsMatch": true,
+    "downloadedChecksumVerified": true,
+    "downloadedZipIntegrityVerified": true,
+    "artifactTransferNote": "Initial build-12 kubectl cp ended with unexpected EOF; only the transfer was retried. Recovered APK matches the pod digest and passes checksum and ZIP checks."
+  },
+  "android": {
+    "apiLevel": 30,
+    "image": "aosp_atd;x86_64",
+    "serial": "emulator-5554",
+    "appVersionCode": 12,
+    "runner": "dev.omp.mobile.debug.test/androidx.test.runner.AndroidJUnitRunner",
+    "passed": 13,
+    "failed": 0,
+    "junitElapsedSeconds": 87.476,
+    "log": "instrumentation.txt",
+    "runtimeScenario": "BackgroundConnectionInstrumentedTest.backgroundReconnectDrainsOnlyAfterSnapshotAndDisconnectStopsService",
+    "observed": [
+      "Pending prompt clears its unchanged draft while initial snapshot remains incomplete",
+      "ProcessLifecycleOwner stops after the app task moves to the background",
+      "Android reports an actual foreground service while the UI is stopped",
+      "Unexpected WebSocket close reconnects while the app remains backgrounded",
+      "Two pending prompts remain unsent during partial snapshot sync and then arrive FIFO",
+      "Already dispatched prompts are not replayed after a second background reconnect",
+      "Notification Disconnect stops the connection and foreground service without an automatic retry",
+      "Explicit retry reconnects after returning to the UI",
+      "Immediate disconnect/retry retains demand across foreground-service stop and recreation",
+      "Recreated foreground service remains active after the UI is backgrounded again",
+      "Draft revision, per-pairing draft isolation, image preparation, and encrypted storage regressions pass"
+    ]
+  },
+  "limits": [
+    "No physical Android device was available; ATD disables drawing, so composer pixel transparency and physical-device visuals were not visually verified",
+    "API 34+ foreground-service policy and OEM battery/Doze behavior were not exercised",
+    "Real Wi-Fi/mobile radio handoff and sticky restoration after killing the process were not exercised",
+    "The runtime host was an AES-GCM wire-3 fixture with public test credentials, not a real OMP process or model-provider authorization test",
+    "Pending prompts are memory-only; process death loses them, and force-stop or OS battery policy can stop or defer background operation"
+  ]
+}

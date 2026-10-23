@@ -128,7 +128,7 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
             style = MaterialTheme.typography.bodySmall,
         )
         Text(
-            "Connections run only while the app is in the foreground. There is no background service, gateway, offline cache, biometrics, or room discovery.",
+            "Wanted connections use a foreground service and reconnect when the network returns. Android battery restrictions, force-stop, or stopping the service can interrupt background connectivity; reopen the app to resume. There is no gateway, offline cache, biometrics, or room discovery.",
             style = MaterialTheme.typography.bodySmall,
         )
         Text(

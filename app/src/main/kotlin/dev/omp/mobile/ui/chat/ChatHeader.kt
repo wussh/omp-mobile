@@ -228,8 +228,8 @@ internal fun SessionDetailsDialog(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 DetailRow(
                     "Lifecycle",
-                    "The app connects only while it is in the foreground. Returning from the " +
-                        "background re-syncs the transcript; the host stays authoritative.",
+                    "Wanted connections stay active through a foreground service. Battery restrictions, " +
+                        "force-stop, or stopping the service can interrupt them; reopen the app to resume. The host stays authoritative.",
                 )
                 DetailRow(
                     "Delivery",
@@ -271,7 +271,7 @@ internal fun connectionStatusText(status: ConnectionStatus): String = when (stat
     ConnectionStatus.Connected -> "Connected"
     is ConnectionStatus.Reconnecting -> "Reconnecting (attempt ${status.attempt})…"
     ConnectionStatus.WaitingForNetwork -> "Waiting for network…"
-    ConnectionStatus.Paused -> "Paused while the app is in the background. Reopen it to reconnect."
+    ConnectionStatus.Paused -> "Background connection unavailable. Reopen the app to reconnect."
     ConnectionStatus.Idle -> "Not connected."
     is ConnectionStatus.Ended -> "Session ended: ${status.reason}"
     is ConnectionStatus.Failed -> "Failed: ${status.message}"

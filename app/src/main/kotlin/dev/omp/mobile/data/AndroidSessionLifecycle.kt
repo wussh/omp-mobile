@@ -1,9 +1,12 @@
 package dev.omp.mobile.data
 
 import android.content.Context
+import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
@@ -11,22 +14,21 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/**
- * Foreground-only session lifecycle.
- *
- * Registers exactly one default [ConnectivityManager.NetworkCallback] while
- * the process is started and unregisters it on stop. The first capabilities
- * change after a new default network gates the first connection attempt.
- */
+/** Owns one main-thread network observer for the UI or a confirmed foreground service. */
 @Singleton
 class AndroidSessionLifecycle @Inject constructor(
-    @ApplicationContext context: Context,
+    @ApplicationContext private val context: Context,
 ) {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
+    private val main = Handler(Looper.getMainLooper())
     private var host: SessionRuntimeHost? = null
-    private var foreground = false
+    private var uiStarted = false
+    private var serviceRunning = false
+    private var serviceRequested = false
+    private var serviceStopping = false
+    private var connectionWanted = false
+    private var runtimeStarted = false
     private var callbackRegistered = false
-
     private var currentNetwork: Network? = null
     private var awaitingCapabilities = false
     private var lastTransport = -1
@@ -64,51 +66,111 @@ class AndroidSessionLifecycle @Inject constructor(
             awaitingCapabilities = false
             lastTransport = -1
             lastValidated = false
-            if (foreground) host?.onNetworkUnavailable()
+            if (runtimeStarted) host?.onNetworkUnavailable()
         }
     }
 
     private val observer = LifecycleEventObserver { _, event ->
         when (event) {
-            Lifecycle.Event.ON_START -> start()
-            Lifecycle.Event.ON_STOP -> stop()
+            Lifecycle.Event.ON_START -> {
+                uiStarted = true
+                updateRuntime()
+                requestServiceIfWanted()
+            }
+            Lifecycle.Event.ON_STOP -> {
+                uiStarted = false
+                updateRuntime()
+            }
             else -> Unit
         }
     }
 
     fun attach(host: SessionRuntimeHost) {
+        checkMainThread()
+        check(this.host == null) { "Runtime host is already attached" }
         this.host = host
         ProcessLifecycleOwner.get().lifecycle.addObserver(observer)
-        if (ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) start()
+        uiStarted = ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        val wasStarted = runtimeStarted
+        updateRuntime()
+        if (wasStarted) host.onRuntimeStarted(networkReady = currentNetwork != null && !awaitingCapabilities)
     }
 
-    private fun start() {
-        if (foreground) return
-        foreground = true
-        currentNetwork = null
-        awaitingCapabilities = true
-        lastTransport = -1
-        lastValidated = false
-        runCatching {
-            connectivity.registerDefaultNetworkCallback(callback)
-            callbackRegistered = true
+    fun setConnectionWanted(wanted: Boolean) {
+        checkMainThread()
+        connectionWanted = wanted
+        if (wanted) {
+            requestServiceIfWanted()
+        } else {
+            serviceRequested = false
+            serviceStopping = context.stopService(Intent(context, SessionForegroundService::class.java)) || serviceStopping
         }
-        // Until the first capabilities change arrives, the repository waits.
-        host?.onForeground(networkReady = false)
     }
 
-    private fun stop() {
-        if (!foreground) return
-        foreground = false
-        if (callbackRegistered) {
-            runCatching { connectivity.unregisterNetworkCallback(callback) }
-            callbackRegistered = false
+    internal fun onServiceStarted() {
+        checkMainThread()
+        serviceRequested = true
+        serviceRunning = true
+        updateRuntime()
+    }
+
+    internal fun onServiceStopped() {
+        checkMainThread()
+        val restartRequested = serviceStopping && connectionWanted
+        serviceStopping = false
+        serviceRequested = false
+        serviceRunning = false
+        updateRuntime()
+        if (restartRequested) requestServiceIfWanted()
+    }
+
+    internal fun disconnectRequested() {
+        checkMainThread()
+        setConnectionWanted(false)
+        host?.onDisconnectRequested()
+    }
+
+    private fun requestServiceIfWanted() {
+        if (!connectionWanted || serviceRequested || serviceRunning) return
+        // A rejected start is not a running runtime. Retry when the UI next starts.
+        try {
+            context.startForegroundService(Intent(context, SessionForegroundService::class.java))
+            serviceRequested = true
+        } catch (_: IllegalStateException) {
+            serviceRequested = false
+        } catch (_: SecurityException) {
+            serviceRequested = false
         }
-        currentNetwork = null
-        awaitingCapabilities = false
-        lastTransport = -1
-        lastValidated = false
-        host?.onBackground()
+    }
+
+    private fun updateRuntime() {
+        val wanted = uiStarted || serviceRunning
+        if (runtimeStarted == wanted) return
+        runtimeStarted = wanted
+        if (wanted) {
+            awaitingCapabilities = true
+            try {
+                connectivity.registerDefaultNetworkCallback(callback, main)
+                callbackRegistered = true
+            } catch (_: RuntimeException) {
+                callbackRegistered = false
+            }
+            host?.onRuntimeStarted(networkReady = false)
+        } else {
+            if (callbackRegistered) {
+                runCatching { connectivity.unregisterNetworkCallback(callback) }
+                callbackRegistered = false
+            }
+            currentNetwork = null
+            awaitingCapabilities = false
+            lastTransport = -1
+            lastValidated = false
+            host?.onRuntimeStopped()
+        }
+    }
+
+    private fun checkMainThread() {
+        check(Looper.myLooper() == Looper.getMainLooper())
     }
 
     private fun transportMask(capabilities: NetworkCapabilities): Int {

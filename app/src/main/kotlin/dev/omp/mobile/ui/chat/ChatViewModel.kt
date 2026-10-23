@@ -28,6 +28,7 @@ class ChatViewModel @Inject constructor(
     val session = repository.session
 
     private val drafts = mutableMapOf<String, String>()
+    private val draftRevisions = mutableMapOf<String, Long>()
     private val _draft = MutableStateFlow("")
     val draft: StateFlow<String> = _draft.asStateFlow()
 
@@ -92,7 +93,10 @@ class ChatViewModel @Inject constructor(
 
     fun setDraft(text: String) {
         _draft.value = text
-        currentPairingId?.let { drafts[it] = text }
+        currentPairingId?.let {
+            drafts[it] = text
+            draftRevisions[it] = (draftRevisions[it] ?: 0) + 1
+        }
     }
 
     fun addImages(uris: List<Uri>) {
@@ -150,22 +154,25 @@ class ChatViewModel @Inject constructor(
         val pairingId = currentPairingId ?: return
         val text = _draft.value
         val images = _attachments.value
+        val draftRevision = draftRevisions[pairingId] ?: 0
         if ((text.isBlank() && images.isEmpty()) || _preparingImages.value || _sendingPrompt.value) return
         val payload = images.map { PromptImage(it.base64, it.mimeType) }
         _sendingPrompt.value = true
         viewModelScope.launch {
             try {
-                when (repository.sendPrompt(text, payload)) {
-                    SendResult.Queued -> {
-                        if (drafts[pairingId] == text) drafts[pairingId] = ""
+                when (val result = repository.sendPrompt(pairingId, text, payload)) {
+                    SendResult.Queued, SendResult.PendingConnection -> {
+                        if ((draftRevisions[pairingId] ?: 0) == draftRevision) drafts[pairingId] = ""
                         val sentIds = images.mapTo(mutableSetOf()) { it.id }
                         val remaining = attachmentsByPairing[pairingId].orEmpty().filterNot { it.id in sentIds }
                         attachmentsByPairing[pairingId] = remaining
                         if (currentPairingId == pairingId) {
-                            sendingInFlight = true
+                            sendingInFlight = result == SendResult.Queued
                             _draft.value = drafts[pairingId].orEmpty()
                             _attachments.value = remaining
-                            _info.value = null
+                            _info.value = if (result == SendResult.PendingConnection) {
+                                "Prompt queued on this phone; sends after reconnect and sync."
+                            } else null
                         }
                     }
                     SendResult.NotConnected -> _info.value = "Not connected; draft and images kept."
@@ -248,6 +255,7 @@ class ChatViewModel @Inject constructor(
         SendResult.ReadOnly -> "View sessions cannot answer."
         SendResult.Rejected -> "Response could not be sent."
         SendResult.Queued -> ""
+        SendResult.PendingConnection -> "Response was not sent."
     }
 
 }

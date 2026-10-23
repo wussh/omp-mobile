@@ -20,7 +20,7 @@ android {
         minSdk = 26
         targetSdk = 37
         // Increment for each APK build, not for each source edit.
-        versionCode = 7
+        versionCode = 12
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -120,6 +120,7 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.coroutines.test)
+    androidTestImplementation(libs.okhttp.mockwebserver)
 }
 
 kotlin {

@@ -42,8 +42,12 @@ private class FakeSession(
     private val cipher = RoomCipher.fromKey(key)
     private var closed = false
     val sent = mutableListOf<ByteArray>()
+    var throwOnSend = false
+    var rejectSend = false
 
     override fun send(bytes: ByteArray): Boolean {
+        if (throwOnSend) throw IOException("uncertain dispatch")
+        if (rejectSend) return false
         if (closed) return false
         sent += bytes
         return true
@@ -127,6 +131,187 @@ class CollabClientTest {
         runCurrent()
         return session
     }
+
+    @Test
+    fun pendingPromptsWaitForFinalSnapshotAndDrainFifoWithImages() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport)
+        client.connect(credentials(), "Android")
+        runCurrent()
+        assertEquals(SendResult.PendingConnection, client.sendPrompt("first", listOf(PromptImage("YWJj", "image/png"))))
+        assertEquals(SendResult.PendingConnection, client.sendPrompt("second"))
+        val socket = transport.sessions.last()
+        socket.open()
+        socket.deliver(welcomeJson(2))
+        runCurrent()
+        socket.deliver(chunkJson(listOf("one"), false))
+        runCurrent()
+        assertEquals(1, socket.guestFrames().size)
+        socket.deliver(chunkJson(listOf("two"), true))
+        runCurrent()
+        val frames = socket.guestFrames()
+        assertEquals(3, frames.size)
+        assertTrue(frames[1].contains("first"))
+        assertTrue(frames[1].contains("YWJj"))
+        assertTrue(frames[2].contains("second"))
+        assertEquals(0, client.state.value.queuedPromptCount)
+        socket.failure()
+        runCurrent()
+        client.retry()
+        runCurrent()
+        val next = transport.sessions.last()
+        next.open()
+        next.deliver(welcomeJson(0))
+        runCurrent()
+        assertEquals(1, next.guestFrames().size)
+    }
+
+    @Test
+    fun pendingPromptsSurvivePauseNetworkAndManualRetryButWaitForWritableWelcome() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport)
+        connected(client, transport)
+        client.pause()
+        runCurrent()
+        assertEquals(SendResult.PendingConnection, client.sendPrompt("pending"))
+        client.resume()
+        runCurrent()
+        client.networkLost()
+        runCurrent()
+        client.networkValidated()
+        runCurrent()
+        var socket = transport.sessions.last()
+        socket.open()
+        socket.deliver(welcomeJson(1, readOnly = true))
+        runCurrent()
+        assertEquals(1, client.state.value.queuedPromptCount)
+        assertEquals(1, socket.guestFrames().size)
+        assertEquals(SendResult.ReadOnly, client.sendPrompt("not accepted"))
+        client.retry()
+        runCurrent()
+        socket = transport.sessions.last()
+        socket.open()
+        socket.deliver(welcomeJson(0))
+        runCurrent()
+        assertEquals(0, client.state.value.queuedPromptCount)
+        assertTrue(socket.guestFrames().last().contains("pending"))
+    }
+
+    @Test
+    fun falseSendRetainsPromptWhileUncertainSendDoesNotReplay() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport)
+        val socket = connected(client, transport)
+        socket.rejectSend = true
+        assertEquals(SendResult.PendingConnection, client.sendPrompt("retry me"))
+        assertEquals(1, client.state.value.queuedPromptCount)
+        client.retry()
+        runCurrent()
+        val next = transport.sessions.last()
+        next.open()
+        next.deliver(welcomeJson(0))
+        runCurrent()
+        assertTrue(next.guestFrames().last().contains("retry me"))
+        next.throwOnSend = true
+        assertEquals(SendResult.Rejected, client.sendPrompt("uncertain"))
+        assertEquals(0, client.state.value.queuedPromptCount)
+        assertTrue(client.state.value.notice!!.contains("uncertain"))
+        client.retry()
+        runCurrent()
+        val last = transport.sessions.last()
+        last.open()
+        last.deliver(welcomeJson(0))
+        runCurrent()
+        assertEquals(1, last.guestFrames().size)
+        client.clearNotice()
+        runCurrent()
+        assertEquals(null, client.state.value.notice)
+    }
+
+    @Test
+    fun pendingCapacityAndExplicitCancellationAreObservable() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport)
+        client.connect(credentials(), "Android")
+        runCurrent()
+        repeat(16) { assertEquals(SendResult.PendingConnection, client.sendPrompt("prompt $it")) }
+        assertEquals(SendResult.Rejected, client.sendPrompt("overflow"))
+        assertEquals(16, client.state.value.queuedPromptCount)
+        client.disconnect()
+        runCurrent()
+        assertEquals(0, client.state.value.queuedPromptCount)
+        assertTrue(client.state.value.notice!!.contains("cancelled"))
+        client.connect(credentials(), "Android")
+        runCurrent()
+        assertEquals(SendResult.Rejected, client.sendPrompt("large", listOf(PromptImage("x".repeat(16 * 1024 * 1024), "image/png"))))
+        assertEquals(0, client.state.value.queuedPromptCount)
+        assertEquals(SendResult.PendingConnection, client.sendPrompt("clear"))
+        client.clearSession()
+        runCurrent()
+        assertEquals(0, client.state.value.queuedPromptCount)
+        assertTrue(client.state.value.notice!!.contains("cleared"))
+    }
+
+    @Test
+    fun pendingPromptsNeverCrossCredentialChangesAndStaleActivationIsRejected() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport)
+        val original = credentials()
+        val variants = listOf(
+            PairingCredentials("ws://other:7466", original.roomId, key, token),
+            PairingCredentials(original.relayOrigin, "differentRoom", key, token),
+            PairingCredentials(original.relayOrigin, original.roomId, ByteArray(32) { 7 }, token),
+            PairingCredentials(original.relayOrigin, original.roomId, key, ByteArray(16) { 8 }),
+        )
+        for (different in variants) {
+            client.connect(original, "Android")
+            runCurrent()
+            val observed = client.state.value.activation
+            assertEquals(SendResult.PendingConnection, client.sendPrompt("private"))
+            client.connect(different, "Android")
+            runCurrent()
+            assertEquals(0, client.state.value.queuedPromptCount)
+            assertTrue(client.state.value.notice!!.contains("pairing changed"))
+            assertEquals(SendResult.Rejected, client.sendPrompt("stale", expectedActivation = observed))
+        }
+    }
+
+    @Test
+    fun pendingAggregatePayloadIsBoundedAndNonPromptMutationsAreNotRetained() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport)
+        client.connect(credentials(), "Android")
+        runCurrent()
+        val payload = "x".repeat(8 * 1024 * 1024)
+        assertEquals(SendResult.PendingConnection, client.sendPrompt(payload))
+        assertEquals(SendResult.Rejected, client.sendPrompt(payload))
+        assertEquals(1, client.state.value.queuedPromptCount)
+        assertEquals(SendResult.NotConnected, client.interrupt())
+        assertEquals(SendResult.NotConnected, client.respond(1, "answer"))
+        assertEquals(SendResult.NotConnected, client.sendAgentCommand(AgentCommand.KILL, "agent"))
+        val socket = transport.sessions.last()
+        socket.open()
+        socket.deliver(welcomeJson(0))
+        runCurrent()
+        assertEquals(2, socket.guestFrames().size)
+    }
+
+    @Test
+    fun pendingPromptsDrainWhenAdvertisedSnapshotCompletesWithoutFinal() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport)
+        client.connect(credentials(), "Android")
+        runCurrent()
+        assertEquals(SendResult.PendingConnection, client.sendPrompt("wait for final"))
+        val socket = transport.sessions.last()
+        socket.open()
+        socket.deliver(welcomeJson(1))
+        socket.deliver(chunkJson(listOf("one"), false))
+        runCurrent()
+        assertEquals(0, client.state.value.queuedPromptCount)
+        assertEquals(2, socket.guestFrames().size)
+    }
+
 
     @Test
     fun parserDiagnosticsExposeLocationWithoutPayloadOrCredentials() = runTest {
@@ -282,7 +467,7 @@ class CollabClientTest {
     }
 
     @Test
-    fun rejectedSocketSendReconnectsAndResyncsWithoutReplayingPrompt() = runTest {
+    fun rejectedSocketSendRetainsUnsentPromptUntilResynced() = runTest {
         val transport = FakeTransport(key)
         val client = CollabClient(backgroundScope, transport, random = Random(1))
         val old = connected(client, transport)
@@ -290,7 +475,7 @@ class CollabClientTest {
         runCurrent()
         // A socket may refuse enqueue before its close callback reaches the actor.
         old.close(1000, "")
-        assertEquals(SendResult.Rejected, client.sendPrompt("do not replay"))
+        assertEquals(SendResult.PendingConnection, client.sendPrompt("do not replay"))
         val reconnecting = client.state.value.status
         assertTrue(reconnecting is ConnectionStatus.Reconnecting)
         assertEquals(listOf("retained"), client.state.value.replica.entries.map { it.id })
@@ -305,8 +490,8 @@ class CollabClientTest {
         runCurrent()
         assertEquals(ConnectionStatus.Connected, client.state.value.status)
         assertEquals(listOf("resynced"), client.state.value.replica.entries.map { it.id })
-        assertEquals(1, replacement.guestFrames().size)
-        assertTrue(replacement.guestFrames().single().contains(""""t":"hello""""))
+        assertEquals(2, replacement.guestFrames().size)
+        assertTrue(replacement.guestFrames().last().contains("do not replay"))
     }
 
     @Test

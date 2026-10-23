@@ -45,10 +45,15 @@ data class ClientState(
     val readOnly: Boolean = false,
     val hasWriteToken: Boolean = false,
     val protocolVersion: Int? = null,
+    val activation: Long = 0,
+    val selection: Long = 0,
+    val queuedPromptCount: Int = 0,
+    val notice: String? = null,
 )
 
 sealed interface SendResult {
     data object Queued : SendResult
+    data object PendingConnection : SendResult
     data object NotConnected : SendResult
     data object ReadOnly : SendResult
     data object Rejected : SendResult
@@ -116,6 +121,11 @@ class CollabClient(
 
     private var transcriptSeq = 0L
     private val pendingTranscripts = mutableMapOf<Long, PendingTranscript>()
+    private data class PendingPrompt(val json: String, val bytes: Int)
+    private val pendingPrompts = ArrayDeque<PendingPrompt>()
+    private var pendingPromptBytes = 0L
+    private var notice: String? = null
+    private var selection = 0L
 
     private data class Active(
         val credentials: PairingCredentials,
@@ -138,10 +148,14 @@ class CollabClient(
     }
 
     // ── Public control surface ────────────────────────────────────────────
+    fun clearNotice() {
+        messages.trySend(Msg.ClearNotice)
+    }
+
 
     /** Starts a fresh activation for [credentials]. Keeps the ledger for the same room. */
-    fun connect(credentials: PairingCredentials, nickname: String) {
-        messages.trySend(Msg.Connect(credentials, nickname))
+    fun connect(credentials: PairingCredentials, nickname: String, selection: Long = 0) {
+        messages.trySend(Msg.Connect(credentials, nickname, selection))
     }
 
     fun disconnect() {
@@ -179,11 +193,14 @@ class CollabClient(
         messages.trySend(Msg.NetworkValidated)
     }
 
-    suspend fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): SendResult {
+    suspend fun sendPrompt(
+        text: String,
+        images: List<PromptImage> = emptyList(),
+        expectedActivation: Long = activationId,
+    ): SendResult {
         if (text.isBlank() && images.isEmpty()) return SendResult.Rejected
         val ack = CompletableDeferred<SendResult>()
-        val activation = activationId
-        if (!messages.trySend(Msg.SendPrompt(text, images, activation, ack)).isSuccess) {
+        if (!messages.trySend(Msg.SendPrompt(text, images.toList(), expectedActivation, ack)).isSuccess) {
             return SendResult.NotConnected
         }
         return ack.await()
@@ -241,7 +258,11 @@ class CollabClient(
 
     private fun handle(message: Msg) {
         when (message) {
-            is Msg.Connect -> startActivation(message.credentials, message.nickname, clearIfDifferent = true)
+            Msg.ClearNotice -> {
+                notice = null
+                publishNow()
+            }
+            is Msg.Connect -> startActivation(message.credentials, message.nickname, true, message.selection)
             Msg.Disconnect -> disconnectNow()
             Msg.ClearSession -> clearSessionNow()
             Msg.Retry -> manualRetry()
@@ -279,7 +300,14 @@ class CollabClient(
         }
     }
 
-    private fun startActivation(credentials: PairingCredentials, nickname: String, clearIfDifferent: Boolean) {
+    private fun startActivation(
+        credentials: PairingCredentials,
+        nickname: String,
+        clearIfDifferent: Boolean,
+        selection: Long = this.selection,
+    ) {
+        this.selection = selection
+        if (active?.credentials != credentials) cancelPendingPrompts("Pending prompts cancelled: pairing changed")
         val cipher = try {
             RoomCipher.fromKey(credentials.key)
         } catch (e: IllegalArgumentException) {
@@ -326,6 +354,7 @@ class CollabClient(
 
     private fun disconnectNow() {
         autoConnectWanted = false
+        cancelPendingPrompts("Pending prompts cancelled: disconnected")
         invalidateSocket()
         cancelTimers()
         active = null
@@ -337,6 +366,7 @@ class CollabClient(
 
     private fun clearSessionNow() {
         autoConnectWanted = false
+        cancelPendingPrompts("Pending prompts cancelled: pairing cleared")
         invalidateSocket()
         cancelTimers()
         active = null
@@ -532,6 +562,7 @@ class CollabClient(
                     status = ConnectionStatus.Connected
                     attemptCounter = 0
                     diagnostic(DiagnosticEvent.READY)
+                    drainPendingPrompts()
                 } else {
                     status = ConnectionStatus.Syncing(loading.received, loading.total)
                     armProgressTimeout()
@@ -608,6 +639,7 @@ class CollabClient(
             attemptCounter = 0
             cancelProgressTimer()
             diagnostic(DiagnosticEvent.READY)
+            drainPendingPrompts()
         } else {
             status = ConnectionStatus.Syncing(0, frame.entryCount)
             armProgressTimeout()
@@ -717,6 +749,7 @@ class CollabClient(
 
     private fun endNow(reason: String) {
         autoConnectWanted = false
+        cancelPendingPrompts("Pending prompts cancelled: session ended")
         invalidateSocket()
         cancelTimers()
         replica.onDisconnected()
@@ -726,6 +759,7 @@ class CollabClient(
 
     private fun fail(kind: FailureKind, message: String) {
         autoConnectWanted = false
+        cancelPendingPrompts("Pending prompts cancelled: connection failed")
         invalidateSocket()
         cancelTimers()
         replica.onDisconnected()
@@ -741,8 +775,61 @@ class CollabClient(
     private fun sendPromptNow(text: String, images: List<PromptImage>, expected: Long): SendResult {
         if (text.isBlank() && images.isEmpty()) return SendResult.Rejected
         if (!isCurrentActivation(expected)) return SendResult.Rejected
-        if (status !is ConnectionStatus.Connected) return SendResult.NotConnected
-        return sendMutating(GuestFrame.Prompt(text, images))
+        if (!autoConnectWanted || active == null) return SendResult.NotConnected
+        if (active?.credentials?.hasWriteToken != true) return SendResult.ReadOnly
+        if (welcomed && replica.snapshot().readOnly) return SendResult.ReadOnly
+        when (status) {
+            ConnectionStatus.Connected, ConnectionStatus.Connecting, is ConnectionStatus.Syncing,
+            is ConnectionStatus.Reconnecting, ConnectionStatus.WaitingForNetwork,
+            ConnectionStatus.Paused -> Unit
+            else -> return SendResult.NotConnected
+        }
+        val json = encodeGuestFrame(GuestFrame.Prompt(text, images))
+        val bytes = json.toByteArray(Charsets.UTF_8).size
+        if (pendingPrompts.size >= MAX_PENDING_PROMPTS || pendingPromptBytes + bytes > MAX_PENDING_BYTES) {
+            notice = "Pending prompt limit reached; this prompt was not queued"
+            publishNow()
+            return SendResult.Rejected
+        }
+        val prompt = PendingPrompt(json, bytes)
+        pendingPrompts.addLast(prompt)
+        pendingPromptBytes += bytes
+        drainPendingPrompts()
+        publishNow()
+        return when {
+            pendingPrompts.any { it === prompt } -> SendResult.PendingConnection
+            status != ConnectionStatus.Connected -> SendResult.Rejected
+            else -> SendResult.Queued
+        }
+    }
+
+    private fun cancelPendingPrompts(message: String) {
+        if (pendingPrompts.isEmpty()) return
+        pendingPrompts.clear()
+        pendingPromptBytes = 0
+        notice = message
+    }
+
+    private fun drainPendingPrompts() {
+        if (status != ConnectionStatus.Connected || replica.snapshot().loading != null ||
+            replica.snapshot().readOnly || !autoConnectWanted) return
+        val current = active ?: return
+        if (!current.credentials.hasWriteToken) return
+        while (pendingPrompts.isNotEmpty() && status == ConnectionStatus.Connected) {
+            val prompt = pendingPrompts.first()
+            val sent = try {
+                sendEncrypted(current, prompt.json)
+            } catch (_: Exception) {
+                // Dispatch may have happened. Never automatically replay an uncertain send.
+                pendingPrompts.removeFirst()
+                pendingPromptBytes -= prompt.bytes
+                notice = "Prompt delivery is uncertain; it will not be resent automatically"
+                return
+            }
+            if (!sent) return
+            pendingPrompts.removeFirst()
+            pendingPromptBytes -= prompt.bytes
+        }
     }
 
     private fun sendInterruptNow(expected: Long): SendResult {
@@ -857,8 +944,14 @@ class CollabClient(
         val sealed = current.cipher.seal(json)
         val sent = try {
             socket.send(packEnvelope(0, sealed))
-        } catch (_: Exception) {
-            false
+        } catch (error: Exception) {
+            if (status is ConnectionStatus.Connected) {
+                invalidateSocket()
+                cancelTimers()
+                replica.onDisconnected()
+                scheduleRetry("Connection lost while sending; delivery uncertain")
+            }
+            throw error
         }
         if (!sent && status is ConnectionStatus.Connected) {
             diagnostic(DiagnosticEvent.SEND_REJECTED)
@@ -936,6 +1029,10 @@ class CollabClient(
             readOnly = snapshot.readOnly,
             hasWriteToken = active?.credentials?.hasWriteToken == true,
             protocolVersion = protocolVersion,
+            activation = activationId,
+            selection = selection,
+            queuedPromptCount = pendingPrompts.size,
+            notice = notice,
         )
     }
 
@@ -974,8 +1071,9 @@ class CollabClient(
     // ── Messages ──────────────────────────────────────────────────────────
 
     private sealed interface Msg {
-        data class Connect(val credentials: PairingCredentials, val nickname: String) : Msg
+        data class Connect(val credentials: PairingCredentials, val nickname: String, val selection: Long) : Msg
         data object Disconnect : Msg
+        data object ClearNotice : Msg
         data object ClearSession : Msg
         data object Retry : Msg
         data object Pause : Msg
@@ -1036,5 +1134,7 @@ class CollabClient(
         const val BACKOFF_MAX_MS = 30_000L
         const val PUBLISH_COALESCE_MS = 16L
         const val TRANSCRIPT_TIMEOUT_MS = 10_000L
+        const val MAX_PENDING_PROMPTS = 16
+        const val MAX_PENDING_BYTES = 16L * 1024 * 1024
     }
 }

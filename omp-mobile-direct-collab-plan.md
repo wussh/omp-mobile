@@ -2,6 +2,22 @@
 
 > Catatan implementasi saat ini: APK debug memakai package `dev.omp.mobile.debug` dan label **OMP Mobile Debug**, terpisah dari aplikasi lama `dev.omp.mobile`. Namespace Kotlin tetap `dev.omp.mobile`. Gunakan `scripts/build-debug-kube.sh` dengan signing key persisten; jangan membuat debug keystore baru di pod sementara. Rincian toolchain awal di bawah merupakan baseline rencana.
 
+## Perilaku saat ini — build 12
+
+Kebijakan **foreground-only** dan larangan seluruh antrean prompt pada baseline rencana di bawah telah diganti oleh perilaku berikut. Larangan replay perintah yang sudah dikirim tetap berlaku.
+
+- Composer dan wadah editornya transparan; padding IME tetap dipertahankan. Draft Control tetap bisa diketik saat koneksi belum siap.
+- Send menyimpan prompt yang belum dikirim dalam FIFO milik actor `CollabClient`, terikat kredensial sesi asal. Batasnya 16 prompt / 16 MiB payload JSON terenkode termasuk gambar. Antrean hanya di RAM, bukan penyimpanan offline.
+- Antrean baru dikuras setelah welcome writable dan snapshot lengkap menurut replica: seluruh `entryCount` diterima atau chunk `final`; welcome dengan nol entri langsung siap. Socket terbuka atau snapshot parsial belum cukup.
+- Retry/resume/pergantian jaringan dengan kredensial sama mempertahankan antrean. Disconnect, forget, status terminal, atau pergantian relay/room/key/token membatalkannya dengan pemberitahuan. Welcome read-only menahan antrean lama dan menolak kiriman baru sampai akses writable pulih.
+- `PendingConnection` berarti diterima antrean lokal; `Queued` berarti diterima socket, bukan ACK host. `send=false` boleh dicoba lagi karena belum diterima socket. `send=true` atau exception dengan hasil pengiriman tidak pasti tidak direplay otomatis. Interrupt, respons dialog, dan perintah agen tidak diantrekan offline.
+- Sesi yang diinginkan memakai foreground service `remoteMessaging`, notifikasi ongoing, serta aksi Open/Disconnect. Runtime dan satu default-network callback tetap aktif saat UI berhenti selama service benar-benar berjalan. Penolakan start/promotion Android tidak dianggap sebagai service aktif. Tidak ada wake lock, boot receiver, atau permintaan pengecualian baterai.
+- Pergantian sesi memakai generation tag agar hasil terminal sesi lama tidak menghentikan sesi baru. Pemulihan storage yang sudah usang dibatalkan oleh pilihan/disconnect pengguna. Retry langsung setelah Disconnect tidak kehilangan keinginan koneksi saat service lama sedang berhenti.
+- Force-stop, process death, Doze, dan kebijakan baterai/OEM tetap dapat menghentikan atau menunda koneksi. Prompt di RAM hilang jika proses mati; tidak ada klaim selalu terhubung atau exactly-once.
+
+Verifikasi build 12: 105 tes JVM lulus; 13 tes instrumented Android lulus pada API 30, termasuk reconnect saat proses UI stopped, FIFO setelah snapshot, larangan replay, Disconnect notifikasi, serta disconnect/retry cepat dan service recreation. Signer persisten, digest APK remote/lokal, checksum, dan integritas ZIP cocok. Lihat `evidence/background-queue/`. Fixture runtime memakai AES-GCM wire-3 dengan kredensial uji, bukan OMP/provider nyata. Visual perangkat fisik, kebijakan FGS API 34+, handoff radio nyata, dan sticky restart setelah process kill belum diuji; image ATD mematikan drawing.
+
+
 ## Context
 Bangun aplikasi Android native Kotlin + Jetpack Compose untuk Phase1–2: QR/link pairing, transcript dan control agent, kredensial aman, serta reconnect/resync. OMP/model tetap berjalan di host; aplikasi memakai protokol `/collab` resmi tanpa backend tambahan. Koneksi hanya foreground dan dipulihkan saat dibuka kembali; transcript mengikuti jurnal kronologis client web `/collab`, bukan rekonstruksi cabang aktif TUI. Gateway/discovery room baru tidak dibuat: room pengganti memerlukan link baru.
 

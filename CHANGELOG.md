@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.0 — build 12
+
+- Make both composer/editor containers transparent while preserving keyboard insets and readable controls.
+- Keep Control-session drafts editable while connecting, syncing, reconnecting, or waiting for a network. Send accepts unsent prompts into a session-bound FIFO, with a visible pending count.
+- Dispatch pending prompts only after the writable handshake and complete snapshot. Keep text/images across same-credential recovery; cancel with notice on disconnect, forget, terminal failure, or credential changes.
+- Bound the in-memory outbox to 16 prompts / 16 MiB encoded payload. Rejected submissions keep their drafts; completion cannot erase newer edits or another pairing's draft.
+- Never replay a socket-accepted or uncertain prompt. Local pending acceptance is not host acknowledgment. Interrupts, approvals, and agent commands remain online-only.
+- Keep the selected session and network observation running behind an ongoing foreground-service notification, with Open and Disconnect actions. Use Android's `remoteMessaging` service type and request notification permission where applicable.
+- Isolate stale terminal events from newer selections, cancel obsolete restore work, and preserve rapid disconnect/retry demand while the previous service stops.
+- Preserve the pinned debug signer and package identity; increment the APK version to 12.
+
+Verification: build 12 app/test APKs succeeded in Kubernetes; 105 JVM tests passed, and all 13 Android instrumented tests passed against build 12 on API 30. The runtime scenario exercised background reconnect, snapshot-gated FIFO delivery, no replay, notification Disconnect, explicit retry, and immediate disconnect/retry with service recreation. APK signer, remote/local digest equality, checksum, and ZIP integrity passed. Evidence: `evidence/background-queue/`.
+
+Limits: queued prompts are memory-only and disappear with process death. Android force-stop, battery/Doze policy, or OEM restrictions can stop/defer background operation. Physical-device visuals, API 34+ foreground-service policy, real Wi-Fi/mobile handoff, and sticky process-kill restoration were not exercised; the API 30 ATD emulator disables drawing. The runtime host was an encrypted wire-3 fixture, not a real OMP/model-provider authorization test.
+
 ## 0.1.0 — build 7
 
 - Fix installation conflicts caused by disposable Kubernetes builders generating a different debug signing key for each APK.

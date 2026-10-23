@@ -40,9 +40,21 @@ data class CollabSessionState(
     val relayHost: String? = null,
     val storageError: String? = null,
     val notice: String? = null,
+    val connectionActivation: Long = 0,
+    val queuedPromptCount: Int = 0,
 ) {
     val canMutate: Boolean
         get() = status is ConnectionStatus.Connected && hasWriteToken && !readOnly
+
+    val canDraft: Boolean
+        get() = pairingId != null && hasWriteToken && !readOnly
+
+    val canQueuePrompt: Boolean
+        get() = canDraft && connectionActivation > 0 && when (status) {
+            ConnectionStatus.Connecting, is ConnectionStatus.Syncing, ConnectionStatus.Connected,
+            is ConnectionStatus.Reconnecting, ConnectionStatus.WaitingForNetwork, ConnectionStatus.Paused -> true
+            else -> false
+        }
 }
 
 interface CollabRepository {
@@ -57,7 +69,7 @@ interface CollabRepository {
     suspend fun forget(id: String)
     fun retry()
     fun disconnect()
-    suspend fun sendPrompt(text: String, images: List<PromptImage> = emptyList()): SendResult
+    suspend fun sendPrompt(pairingId: String, text: String, images: List<PromptImage> = emptyList()): SendResult
     suspend fun interrupt(): SendResult
     suspend fun respond(reqId: Long, value: String?): SendResult
     suspend fun sendAgentCommand(command: AgentCommand, agentId: String, text: String? = null): SendResult
@@ -68,8 +80,9 @@ interface CollabRepository {
 }
 
 interface SessionRuntimeHost {
-    fun onForeground(networkReady: Boolean)
-    fun onBackground()
+    fun onRuntimeStarted(networkReady: Boolean)
+    fun onRuntimeStopped()
+    fun onDisconnectRequested()
     fun onNetworkUnavailable()
     fun onNetworkAvailable(changed: Boolean)
     fun onNetworkValidated()
@@ -80,9 +93,9 @@ class DefaultCollabRepository @Inject constructor(
     private val store: PairingStore,
     private val lifecycle: AndroidSessionLifecycle,
 ) : CollabRepository, SessionRuntimeHost {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val client = CollabClient(
-        scope,
+        CoroutineScope(SupervisorJob() + Dispatchers.Default),
         diagnostics = if (BuildConfig.DEBUG) ({ event -> Log.d("OmpCollab", event.toString()); Unit }) else null,
     )
 
@@ -101,9 +114,15 @@ class DefaultCollabRepository @Inject constructor(
     private var stored: List<StoredPairing> = emptyList()
     private var selectedId: String? = null
     private var autoConnectWanted = false
-    private var foreground = false
+        set(value) {
+            field = value
+            lifecycle.setConnectionWanted(value)
+        }
+    private var runtimeActive = false
     private var networkReady = false
     private var restoreDone = false
+    private var selectionRevision = 0L
+    private var sessionSelection = 0L
     private var storageError: String? = null
     private var notice: String? = null
 
@@ -113,6 +132,7 @@ class DefaultCollabRepository @Inject constructor(
             store.storedPairingsFlow.collect { result -> applyStored(result) }
         }
         scope.launch {
+            val restoreRevision = selectionRevision
             _nickname.value = store.nickname.first()
             _theme.value = store.theme.first()
             val last = store.lastPairingId.first()
@@ -120,7 +140,7 @@ class DefaultCollabRepository @Inject constructor(
             if (storedResult is StoreResult.Ok) {
                 stored = storedResult.value
                 _pairings.value = stored.map(StoredPairing::toSaved)
-                if (last != null) {
+                if (last != null && restoreRevision == selectionRevision) {
                     val target = stored.firstOrNull { it.id == last }
                     if (target != null) {
                         selectedId = target.id
@@ -134,14 +154,16 @@ class DefaultCollabRepository @Inject constructor(
                 }
             }
             restoreDone = true
+            lifecycle.setConnectionWanted(autoConnectWanted)
             publishSession()
             if (autoConnectWanted) maybeConnect()
         }
         scope.launch {
             client.state.collect { state ->
+                if (state.selection != sessionSelection) return@collect
                 publishSession(state)
-                when (val status = state.status) {
-                    is ConnectionStatus.Ended, is ConnectionStatus.Failed, ConnectionStatus.Idle -> {
+                when (state.status) {
+                    is ConnectionStatus.Ended, is ConnectionStatus.Failed -> {
                         if (autoConnectWanted) {
                             autoConnectWanted = false
                             store.setLastPairingId(null)
@@ -177,16 +199,23 @@ class DefaultCollabRepository @Inject constructor(
 
     private fun publishSession(state: dev.omp.mobile.collab.ClientState = client.state.value) {
         val selected = stored.firstOrNull { it.id == selectedId }
+        val current = if (state.selection == sessionSelection) state else {
+            dev.omp.mobile.collab.ClientState(
+                status = if (autoConnectWanted) ConnectionStatus.Connecting else ConnectionStatus.Idle,
+            )
+        }
         _session.value = CollabSessionState(
-            status = state.status,
-            replica = state.replica,
-            readOnly = state.readOnly,
-            hasWriteToken = state.hasWriteToken,
+            status = current.status,
+            replica = current.replica,
+            readOnly = current.readOnly,
+            hasWriteToken = selected?.writeToken != null,
             pairingId = selectedId,
             pairingLabel = selected?.label,
             relayHost = selected?.relayOrigin?.removePrefix("wss://")?.removePrefix("ws://"),
             storageError = storageError,
-            notice = notice,
+            notice = notice ?: current.notice,
+            connectionActivation = current.activation,
+            queuedPromptCount = current.queuedPromptCount,
         )
     }
 
@@ -196,6 +225,7 @@ class DefaultCollabRepository @Inject constructor(
     }
 
     override fun clearNotice() {
+        client.clearNotice()
         publishNotice(null)
     }
 
@@ -260,11 +290,13 @@ class DefaultCollabRepository @Inject constructor(
             publishNotice("Release builds only connect over wss://")
             return
         }
+        selectionRevision++
+        sessionSelection++
         selectedId = id
         autoConnectWanted = true
         notice = null
         if (persist) scope.launch { store.setLastPairingId(id) }
-        client.connect(credentials, _nickname.value)
+        client.connect(credentials, _nickname.value, selection = sessionSelection)
         publishSession()
     }
 
@@ -296,6 +328,7 @@ class DefaultCollabRepository @Inject constructor(
                 stored = list
                 _pairings.value = list.map(StoredPairing::toSaved)
                 if (selectedId == id) {
+                    selectionRevision++
                     selectedId = null
                     autoConnectWanted = false
                     client.clearSession()
@@ -318,24 +351,24 @@ class DefaultCollabRepository @Inject constructor(
             publishNotice("Release builds only connect over wss://")
             return
         }
+        selectionRevision++
         autoConnectWanted = true
         scope.launch { store.setLastPairingId(target.id) }
-        when (client.state.value.status) {
-            ConnectionStatus.Idle, ConnectionStatus.Paused, ConnectionStatus.WaitingForNetwork ->
-                client.connect(credentials, _nickname.value)
-
-            else -> client.retry()
-        }
+        client.connect(credentials, _nickname.value, selection = sessionSelection)
     }
 
     override fun disconnect() {
+        selectionRevision++
         autoConnectWanted = false
         client.disconnect()
         scope.launch { store.setLastPairingId(null) }
     }
 
-    override suspend fun sendPrompt(text: String, images: List<PromptImage>): SendResult =
-        client.sendPrompt(text, images)
+    override suspend fun sendPrompt(pairingId: String, text: String, images: List<PromptImage>): SendResult {
+        val observed = session.value
+        if (pairingId != selectedId || pairingId != observed.pairingId) return SendResult.Rejected
+        return client.sendPrompt(text, images, expectedActivation = observed.connectionActivation)
+    }
 
     override suspend fun interrupt(): SendResult = client.interrupt()
 
@@ -378,7 +411,7 @@ class DefaultCollabRepository @Inject constructor(
         BuildConfig.DEBUG || origin.startsWith("wss://")
 
     private fun maybeConnect() {
-        if (!restoreDone || !foreground || !networkReady || !autoConnectWanted) return
+        if (!restoreDone || !runtimeActive || !networkReady || !autoConnectWanted) return
         val target = stored.firstOrNull { it.id == selectedId } ?: return
         val credentials = target.toCredentials() ?: return
         if (!transportAllowed(credentials.relayOrigin)) {
@@ -387,7 +420,7 @@ class DefaultCollabRepository @Inject constructor(
         }
         when (client.state.value.status) {
             ConnectionStatus.Idle, ConnectionStatus.Paused, ConnectionStatus.WaitingForNetwork ->
-                client.connect(credentials, _nickname.value)
+                client.connect(credentials, _nickname.value, selection = sessionSelection)
 
             else -> Unit
         }
@@ -395,16 +428,18 @@ class DefaultCollabRepository @Inject constructor(
 
     // ── SessionRuntimeHost ────────────────────────────────────────────────
 
-    override fun onForeground(networkReady: Boolean) {
-        foreground = true
+    override fun onRuntimeStarted(networkReady: Boolean) {
+        runtimeActive = true
         this.networkReady = networkReady
         if (networkReady) maybeConnect()
     }
 
-    override fun onBackground() {
-        foreground = false
+    override fun onRuntimeStopped() {
+        runtimeActive = false
         client.pause()
     }
+
+    override fun onDisconnectRequested() = disconnect()
 
     override fun onNetworkUnavailable() {
         networkReady = false
@@ -413,7 +448,7 @@ class DefaultCollabRepository @Inject constructor(
 
     override fun onNetworkAvailable(changed: Boolean) {
         networkReady = true
-        if (!foreground || !autoConnectWanted) return
+        if (!runtimeActive || !autoConnectWanted) return
         val current = client.state.value.status
         if (current is ConnectionStatus.Ended || current is ConnectionStatus.Failed) return
         val target = stored.firstOrNull { it.id == selectedId }
@@ -421,7 +456,7 @@ class DefaultCollabRepository @Inject constructor(
             current == ConnectionStatus.WaitingForNetwork
         ) {
             target?.toCredentials()?.takeIf { transportAllowed(it.relayOrigin) }
-                ?.let { client.connect(it, _nickname.value) }
+                ?.let { client.connect(it, _nickname.value, selection = sessionSelection) }
             return
         }
         if (changed) client.networkChanged() else client.networkValidated()

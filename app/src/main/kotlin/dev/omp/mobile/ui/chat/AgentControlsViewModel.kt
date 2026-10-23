@@ -424,6 +424,7 @@ class AgentControlsViewModel @Inject constructor(
 
     private fun SendResult.message(): String = when (this) {
         SendResult.Queued -> "Queued."
+        SendResult.PendingConnection -> "The command has not been sent."
         SendResult.NotConnected -> "Not connected. Wait for the session to be live."
         SendResult.ReadOnly -> NEED_CONTROL
         SendResult.Rejected -> "The command was rejected; the active session may have changed."

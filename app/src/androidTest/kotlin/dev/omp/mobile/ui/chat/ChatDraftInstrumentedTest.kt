@@ -42,7 +42,7 @@ class ChatDraftInstrumentedTest {
         val imageFile = photo()
         main { vm = ChatViewModel(context, repository) }
         try {
-            // The Android system photo picker pauses our foreground-only socket.
+            // Picking images and editing remain available during a connection interruption.
             main {
                 repository.session.value = repository.session.value.copy(status = ConnectionStatus.Paused)
                 vm.addImages(listOf(Uri.fromFile(imageFile)))
@@ -90,6 +90,52 @@ class ChatDraftInstrumentedTest {
         }
     }
 
+    @Test
+    fun queuedPromptKeepsNewlyTypedDraftAndImages() = runBlocking {
+        val repository = DraftRepository()
+        lateinit var vm: ChatViewModel
+        val imageFile = photo()
+        main { vm = ChatViewModel(context, repository) }
+        try {
+            main {
+                repository.session.value = repository.session.value.copy(status = ConnectionStatus.WaitingForNetwork)
+                vm.setDraft("First prompt")
+                vm.send()
+            }
+            withTimeout(5_000) { repository.promptStarted.await() }
+            main {
+                vm.setDraft("Next prompt")
+                vm.addImages(listOf(Uri.fromFile(imageFile)))
+            }
+            withTimeout(10_000) { vm.preparingImages.first { !it } }
+            repository.promptResult.complete(SendResult.PendingConnection)
+            withTimeout(5_000) { vm.sendingPrompt.first { !it } }
+            assertEquals("Next prompt", vm.draft.value)
+            assertEquals(1, vm.attachments.value.size)
+            assertTrue(vm.info.value.orEmpty().contains("queued"))
+        } finally {
+            main { vm.viewModelScope.cancel() }
+            imageFile.delete()
+        }
+    }
+
+    @Test
+    fun sendCompletionPreservesEditedDraftEvenWhenTextMatchesSubmission() = runBlocking {
+        val repository = DraftRepository()
+        lateinit var vm: ChatViewModel
+        main { vm = ChatViewModel(context, repository) }
+        try {
+            main { vm.setDraft("same text"); vm.send() }
+            withTimeout(5_000) { repository.promptStarted.await() }
+            main { vm.setDraft("another draft"); vm.setDraft("same text") }
+            repository.promptResult.complete(SendResult.PendingConnection)
+            withTimeout(5_000) { vm.sendingPrompt.first { !it } }
+            assertEquals("same text", vm.draft.value)
+        } finally {
+            main { vm.viewModelScope.cancel() }
+        }
+    }
+
     private fun photo(): File {
         val file = File(context.cacheDir, "draft-${UUID.randomUUID()}.png")
         val bitmap = Bitmap.createBitmap(64, 32, Bitmap.Config.ARGB_8888)
@@ -112,7 +158,7 @@ class ChatDraftInstrumentedTest {
         override val theme = MutableStateFlow(ThemeMode.SYSTEM)
         val promptStarted = CompletableDeferred<Unit>()
         val promptResult = CompletableDeferred<SendResult>()
-        override suspend fun sendPrompt(text: String, images: List<PromptImage>): SendResult {
+        override suspend fun sendPrompt(pairingId: String, text: String, images: List<PromptImage>): SendResult {
             promptStarted.complete(Unit)
             return promptResult.await()
         }

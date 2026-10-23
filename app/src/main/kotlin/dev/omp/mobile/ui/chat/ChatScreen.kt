@@ -424,17 +424,20 @@ private fun Composer(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
             .imePadding()
             .padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        if (!session.canMutate) {
+        if (!session.canMutate || session.queuedPromptCount > 0) {
             Text(
                 when {
-                    session.readOnly || !session.hasWriteToken -> "View session: read-only transcript."
-                    session.status is ConnectionStatus.Connected -> "Sending is unavailable."
-                    else -> "The composer unlocks after the snapshot completes."
+                    session.queuedPromptCount > 0 ->
+                        "${session.queuedPromptCount} prompt(s) waiting for a ready connection. Kept in memory only."
+                    !session.canDraft -> "View session: read-only transcript."
+                    session.connectionActivation == 0L && session.status == ConnectionStatus.Connecting ->
+                        "Preparing connection; you can keep typing."
+                    session.canQueuePrompt -> "You can send now; prompts wait until reconnect and sync finish."
+                    else -> "Draft kept. Retry the connection before sending."
                 },
                 style = MaterialTheme.typography.labelSmall,
             )
@@ -487,7 +490,6 @@ private fun Composer(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(MaterialTheme.shapes.extraLarge)
-                .background(MaterialTheme.colorScheme.surfaceContainerHigh)
                 .padding(4.dp),
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(2.dp),
@@ -498,7 +500,7 @@ private fun Composer(
                         PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                     )
                 },
-                enabled = session.hasWriteToken && !session.readOnly && session.pairingId != null &&
+                enabled = session.canDraft &&
                     attachments.size < MAX_PROMPT_IMAGES && !preparingImages && !sendingPrompt,
                 modifier = Modifier.size(48.dp),
             ) {
@@ -511,7 +513,7 @@ private fun Composer(
                 value = draft,
                 onValueChange = onDraft,
                 modifier = Modifier.weight(1f).padding(horizontal = 6.dp, vertical = 14.dp),
-                enabled = session.canMutate,
+                enabled = session.canDraft,
                 minLines = 1,
                 maxLines = 6,
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
@@ -533,7 +535,7 @@ private fun Composer(
             )
             Button(
                 onClick = onSend,
-                enabled = session.canMutate && (draft.isNotBlank() || attachments.isNotEmpty()) &&
+                enabled = session.canQueuePrompt && (draft.isNotBlank() || attachments.isNotEmpty()) &&
                     !preparingImages && !sendingPrompt,
                 modifier = Modifier.size(48.dp),
                 shape = CircleShape,
