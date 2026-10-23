@@ -137,4 +137,63 @@ class CollabCodecTest {
             parseHostFrame("""{"t":"transcript","reqId":1,"text":"x"}""")
         }
     }
+
+    @Test
+    fun providerReplayBlocksDoNotDiscardRenderableAssistantContent() {
+        // Rich host messages include provider-only blocks outside the rendered wire subset.
+        val frame = parseHostFrame(
+            """{"t":"event","event":{"type":"message_update","message":{
+                "role":"assistant","timestamp":7,"model":"m","usage":{},"stopReason":"toolUse",
+                "content":[
+                    {"type":"text","text":"Searching"},
+                    {"type":"fallback","from":{"model":"first"},"to":{"model":"second"}},
+                    {"type":"anthropicServerTool","block":{"type":"server_tool_use","id":"native-search","name":"web_search"}},
+                    {"type":"toolCall","id":"call-1","name":"read","arguments":{"path":"file.txt"}},
+                    {"type":"text","text":"Finished"}
+                ]
+            }}}""",
+        ) as HostFrame.EventFrame
+        val message = (frame.event as AgentEvent.MessageUpdate).message as WireMessage.Assistant
+        assertEquals(7L, message.timestamp)
+        assertEquals(3, message.content.size)
+        assertEquals(ContentBlock.Text("Searching"), message.content[0])
+        val call = message.content[1] as ContentBlock.ToolCall
+        assertEquals("call-1", call.id)
+        assertEquals("read", call.name)
+        assertEquals(WireJson.parseToJsonElement("""{"path":"file.txt"}"""), call.arguments)
+        assertEquals(ContentBlock.Text("Finished"), message.content[2])
+    }
+
+    @Test
+    fun unsupportedBlocksDoNotDiscardKnownUserOrToolResultContent() {
+        val frame = parseHostFrame(
+            """{"t":"snapshot-chunk","final":true,"entries":[
+                {"type":"message","id":"u","message":{"role":"user","timestamp":1,"content":[
+                    {"type":"text","text":"Keep user text"},{"type":"futureBlock","text":"not renderable"},
+                    {"type":"image","data":"YWJj","mimeType":"image/png"}
+                ]}},
+                {"type":"message","id":"r","message":{"role":"toolResult","toolCallId":"c","toolName":"read","timestamp":2,"content":[
+                    {"type":"futureBlock"},{"type":"text","text":"Keep result"}
+                ]}}
+            ]}""",
+        ) as HostFrame.SnapshotChunk
+        val user = (frame.entries[0] as MessageEntry).message as WireMessage.User
+        assertEquals(
+            MessageContent.Blocks(listOf(ContentBlock.Text("Keep user text"), ContentBlock.Image("YWJj", "image/png"))),
+            user.content,
+        )
+        val result = (frame.entries[1] as MessageEntry).message as WireMessage.ToolResult
+        assertEquals("c", result.toolCallId)
+        assertEquals(listOf(ContentBlock.Text("Keep result")), result.content)
+    }
+
+    @Test
+    fun malformedMessagesAndBlocksRemainProtocolErrors() {
+        assertThrows(WireFormatException::class.java) {
+            parseHostFrame("""{"t":"entry","entry":{"type":"message","id":"m","message":{"content":"missing role"}}}""")
+        }
+        assertThrows(WireFormatException::class.java) {
+            parseHostFrame("""{"t":"event","event":{"type":"message_end","message":{"role":"assistant","content":[{"text":"missing type"}]}}}""")
+        }
+    }
 }

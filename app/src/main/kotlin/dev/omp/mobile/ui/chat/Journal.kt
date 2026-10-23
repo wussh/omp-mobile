@@ -120,7 +120,7 @@ fun JournalRow(
             is WireMessage.User -> UserRow("host", message.content, entry.timestamp)
             is WireMessage.Assistant -> AssistantRow(message, results, active, pending = false, latestTodoCallId = latestTodoCallId)
             is WireMessage.ToolResult -> Unit // rendered through its toolCall pairing
-            is WireMessage.Developer -> Unit
+            is WireMessage.Developer, is WireMessage.Unknown -> Unit
         }
 
         is CustomMessageEntry -> {

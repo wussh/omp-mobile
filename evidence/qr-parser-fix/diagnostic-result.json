@@ -1,0 +1,24 @@
+{
+  "hostPackage": "@oh-my-pi/pi-coding-agent",
+  "hostVersion": "18.12.6",
+  "protocol": 3,
+  "source": "production CollabHost + SessionManager with test TUI context; no model/provider calls",
+  "qrGalleryConnected": true,
+  "internalHistoryRoles": [
+    "bashExecution",
+    "pythonExecution"
+  ],
+  "providerReplayTextPreserved": true,
+  "liveUpdatesPreserved": true,
+  "automaticRejoin": true,
+  "safeParserIssue": "SNAPSHOT_CHUNK/CONTENT_TYPE",
+  "credentialAndPayloadRedactionChecked": true,
+  "jvmTests": 79,
+  "jvmFailures": 0,
+  "jvmErrors": 0,
+  "androidApi": 36,
+  "instrumentedTestsPassed": 10,
+  "apkSha256": "9dd8765ac18f20094d4f6b2bca10740350807090da04d9a31fb1304642775ee2",
+  "baselineApkError": "Failed: Invalid session frame",
+  "debugSigning": "Fresh cluster debug key differs from the previously shipped APK; clean installation required if Android rejects an update."
+}

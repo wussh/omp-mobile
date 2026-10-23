@@ -15,6 +15,7 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -125,6 +126,58 @@ class CollabClientTest {
         session.deliver(welcomeJson(entryCount, readOnly))
         runCurrent()
         return session
+    }
+
+    @Test
+    fun parserDiagnosticsExposeLocationWithoutPayloadOrCredentials() = runTest {
+        val logs = mutableListOf<CollabDiagnostic>()
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, diagnostics = logs::add)
+        val session = connected(client, transport, entryCount = 1)
+        val secret = "PRIVATE_CHAT_IMAGE_AND_HOST_DETAIL"
+        session.deliver(
+            """{"t":"snapshot-chunk","entries":[{"type":"message","id":"$secret","message":{"content":"$secret"}}],"final":true}""",
+        )
+        runCurrent()
+
+        assertTrue(client.state.value.status is ConnectionStatus.Failed)
+        val failure = logs.singleOrNull { it.event == DiagnosticEvent.PARSE_FAILED }
+        assertNotNull("Parser failure must have reportable metadata", failure)
+        assertEquals(DiagnosticFrame.SNAPSHOT_CHUNK, failure!!.frame)
+        assertEquals(WireIssue.MESSAGE_ROLE, failure.issue)
+        assertEquals(true, failure.welcomed)
+        assertTrue(failure.bytes!! > 0)
+        val report = logs.toString() + client.state.value.status
+        for (privateValue in listOf(secret, credentials().wsUrl, encodeBase64Url(key), encodeBase64Url(token))) {
+            assertFalse("Private data must not enter diagnostics", report.contains(privateValue))
+        }
+    }
+
+    @Test
+    fun reconnectDiagnosticsDoNotLogRemoteCloseReasonOrStreamingContent() = runTest {
+        val logs = mutableListOf<CollabDiagnostic>()
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1), diagnostics = logs::add)
+        val session = connected(client, transport, entryCount = 1)
+        session.deliver(chunkJson(listOf("PRIVATE_SNAPSHOT_CONTENT"), final = true))
+        runCurrent()
+        val beforeStream = logs.toList()
+        session.deliver(assistantUpdate("PRIVATE_STREAMING_CONTENT"))
+        runCurrent()
+        assertEquals("Token streaming must not generate payload logs", beforeStream, logs)
+        session.remoteClose(1006, "PRIVATE_REMOTE_CLOSE_REASON")
+        runCurrent()
+        val retry = client.state.value.status as ConnectionStatus.Reconnecting
+        val scheduled = logs.singleOrNull { it.event == DiagnosticEvent.RETRY_SCHEDULED }
+        assertNotNull("Reconnect must report its scheduled backoff", scheduled)
+        assertEquals(retry.nextDelayMs, scheduled!!.retryMs)
+        advanceTimeBy(retry.nextDelayMs)
+        runCurrent()
+        val attempts = logs.filter { it.event == DiagnosticEvent.CONNECT_ATTEMPT }
+        assertEquals(2, attempts.size)
+        assertTrue(attempts[1].attempt > attempts[0].attempt)
+        assertEquals(attempts[0].activation, attempts[1].activation)
+        assertFalse(logs.toString().contains("PRIVATE_"))
     }
 
     @Test
@@ -691,6 +744,30 @@ class CollabClientTest {
 
     private fun String.reqId(): Long =
         Regex("\"reqId\":(\\d+)").find(this)!!.groupValues[1].toLong()
+
+    @Test
+    fun joinsHostSnapshotContainingInternalMessageRoles() = runTest {
+        val transport = FakeTransport(key)
+        val client = CollabClient(backgroundScope, transport, random = Random(1))
+        client.connect(credentials(), "Android")
+        runCurrent()
+        val socket = transport.sessions.single()
+        socket.open()
+        socket.deliver(welcomeJson(entryCount = 3))
+        socket.deliver(
+            """{"t":"snapshot-chunk","final":true,"entries":[
+                {"type":"message","id":"u","parentId":null,"timestamp":"2026-10-23T00:00:00Z","message":{"role":"user","content":"hello","timestamp":1}},
+                {"type":"message","id":"bash","parentId":"u","timestamp":"2026-10-23T00:00:01Z","message":{"role":"bashExecution","command":"pwd","output":"/work/demo","exitCode":0,"timestamp":2}},
+                {"type":"message","id":"a","parentId":"bash","timestamp":"2026-10-23T00:00:02Z","message":{"role":"assistant","content":[{"type":"text","text":"joined"}],"model":"m","usage":{},"stopReason":"stop","timestamp":3}}
+            ]}""",
+        )
+        runCurrent()
+
+        assertEquals(ConnectionStatus.Connected, client.state.value.status)
+        assertEquals(listOf("u", "bash", "a"), client.state.value.replica.entries.map { it.id })
+        val answer = (client.state.value.replica.entries.last() as MessageEntry).message as WireMessage.Assistant
+        assertEquals(listOf(ContentBlock.Text("joined")), answer.content)
+    }
 
     @Test
     fun realOkHttpTransportCompletesHandshake() {

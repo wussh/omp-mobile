@@ -1,5 +1,6 @@
 package dev.omp.mobile.data
 
+import android.util.Log
 import dev.omp.mobile.collab.AgentCommand
 import dev.omp.mobile.collab.CollabClient
 import dev.omp.mobile.collab.ConnectionStatus
@@ -80,7 +81,10 @@ class DefaultCollabRepository @Inject constructor(
     private val lifecycle: AndroidSessionLifecycle,
 ) : CollabRepository, SessionRuntimeHost {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val client = CollabClient(scope)
+    private val client = CollabClient(
+        scope,
+        diagnostics = if (BuildConfig.DEBUG) ({ event -> Log.d("OmpCollab", event.toString()); Unit }) else null,
+    )
 
     private val _pairings = MutableStateFlow<List<SavedPairing>>(emptyList())
     override val pairings: StateFlow<List<SavedPairing>> = _pairings.asStateFlow()

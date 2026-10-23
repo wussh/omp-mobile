@@ -11,6 +11,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.random.Random
 
@@ -79,6 +83,7 @@ class CollabClient(
     private val transportFactory: TransportFactory = OkHttpCollabTransport(),
     private val clock: () -> Long = System::currentTimeMillis,
     private val random: Random = Random.Default,
+    private val diagnostics: ((CollabDiagnostic) -> Unit)? = null,
 ) {
     private val replica = SessionReplica(clock)
     private val messages = Channel<Msg>(Channel.UNLIMITED)
@@ -403,6 +408,7 @@ class CollabClient(
         closeDecidedForAttempt = false
         intentionalClose = false
         welcomed = false
+        diagnostic(DiagnosticEvent.CONNECT_ATTEMPT)
         welcomeToken = ++timerSeq
         progressToken = ++timerSeq
         cancelRetryTimer()
@@ -438,6 +444,7 @@ class CollabClient(
         currentSocket = try {
             transportFactory.create(current.credentials.wsUrl, listener)
         } catch (e: Exception) {
+            diagnostic(DiagnosticEvent.TRANSPORT_FAILED, transportIssue = classifyTransportFailure(e))
             scheduleRetry("Failed to open connection")
             return
         }
@@ -446,6 +453,7 @@ class CollabClient(
     private fun onOpen(id: Long) {
         if (id != attemptId || !isLiveAttempt()) return
         val current = active ?: return
+        diagnostic(DiagnosticEvent.SOCKET_OPEN)
         welcomed = false
         val token = current.credentials.writeToken?.let(::encodeBase64Url)
         val hello = encodeGuestFrame(GuestFrame.Hello(current.nickname, token))
@@ -455,6 +463,7 @@ class CollabClient(
             scheduleRetry("Failed to send hello")
             return
         }
+        diagnostic(DiagnosticEvent.HELLO_SENT)
         val activation = activationId
         welcomeToken = ++timerSeq
         val tokenId = welcomeToken
@@ -473,14 +482,29 @@ class CollabClient(
         val text = try {
             current.cipher.open(envelope.payload)
         } catch (e: Exception) {
+            diagnostic(DiagnosticEvent.DECRYPT_FAILED, bytes = bytes.size)
             fail(FailureKind.PROTOCOL_ERROR, "Session frame could not be opened")
             return
         }
         val frame = try {
             parseHostFrame(text)
         } catch (e: WireFormatException) {
-            fail(FailureKind.PROTOCOL_ERROR, "Invalid session frame")
+            diagnostic(
+                DiagnosticEvent.PARSE_FAILED, frame = e.frame, bytes = bytes.size, issue = e.issue,
+            )
+            fail(FailureKind.PROTOCOL_ERROR, "Invalid session frame [${e.frame}/${e.issue}; ${bytes.size} bytes]")
             return
+        }
+        when (frame) {
+            is HostFrame.Welcome -> diagnostic(
+                DiagnosticEvent.WELCOME, frame = DiagnosticFrame.WELCOME,
+                bytes = bytes.size, total = frame.entryCount, protocol = frame.proto,
+            )
+            is HostFrame.SnapshotChunk -> diagnostic(
+                DiagnosticEvent.SNAPSHOT_CHUNK, frame = DiagnosticFrame.SNAPSHOT_CHUNK,
+                bytes = bytes.size, entries = frame.entries.size,
+            )
+            else -> Unit // Streaming text and tool payloads never enter the logger.
         }
         handleFrame(frame)
     }
@@ -507,6 +531,7 @@ class CollabClient(
                     cancelProgressTimer()
                     status = ConnectionStatus.Connected
                     attemptCounter = 0
+                    diagnostic(DiagnosticEvent.READY)
                 } else {
                     status = ConnectionStatus.Syncing(loading.received, loading.total)
                     armProgressTimeout()
@@ -582,6 +607,7 @@ class CollabClient(
             status = ConnectionStatus.Connected
             attemptCounter = 0
             cancelProgressTimer()
+            diagnostic(DiagnosticEvent.READY)
         } else {
             status = ConnectionStatus.Syncing(0, frame.entryCount)
             armProgressTimeout()
@@ -603,6 +629,7 @@ class CollabClient(
     private fun onWelcomeTimeout(activation: Long, attempt: Long, token: Long) {
         if (activation != activationId || attempt != attemptId || token != welcomeToken) return
         if (welcomed) return
+        diagnostic(DiagnosticEvent.WELCOME_TIMEOUT)
         invalidateSocket()
         scheduleRetry("Host did not respond")
     }
@@ -610,6 +637,7 @@ class CollabClient(
     private fun onProgressTimeout(activation: Long, attempt: Long, token: Long) {
         if (activation != activationId || attempt != attemptId || token != progressToken) return
         if (replica.snapshot().loading == null) return
+        diagnostic(DiagnosticEvent.SNAPSHOT_TIMEOUT)
         invalidateSocket()
         scheduleRetry("Host did not send the snapshot")
     }
@@ -618,6 +646,7 @@ class CollabClient(
         if (id != attemptId) return
         if (closeDecidedForAttempt) return
         if (intentionalClose) return
+        diagnostic(DiagnosticEvent.SOCKET_CLOSED, closeCode = code)
         closeDecidedForAttempt = true
         currentSocket = null
         cancelTimers()
@@ -651,7 +680,8 @@ class CollabClient(
     }
 
     private fun onFailure(id: Long, error: Throwable) {
-        if (id != attemptId) return
+        if (id != attemptId || closeDecidedForAttempt || intentionalClose) return
+        diagnostic(DiagnosticEvent.TRANSPORT_FAILED, transportIssue = classifyTransportFailure(error))
         onClosed(id, 1006, "Connection lost")
     }
 
@@ -663,6 +693,7 @@ class CollabClient(
         attemptCounter++
         val factor = 0.75 + random.nextDouble() * 0.5
         val delayMs = (base * factor).toLong().coerceAtLeast(0)
+        diagnostic(DiagnosticEvent.RETRY_SCHEDULED, retryMs = delayMs)
         status = ConnectionStatus.Reconnecting(attemptCounter, delayMs, message)
         retryScheduled = true
         retryToken = ++timerSeq
@@ -830,6 +861,7 @@ class CollabClient(
             false
         }
         if (!sent && status is ConnectionStatus.Connected) {
+            diagnostic(DiagnosticEvent.SEND_REJECTED)
             // Enqueue can fail before a close callback. Recover the socket, never replay the action.
             invalidateSocket()
             cancelTimers()
@@ -840,6 +872,35 @@ class CollabClient(
     }
 
     // ── Publishing / lifecycle helpers ────────────────────────────────────
+
+    private fun diagnostic(
+        event: DiagnosticEvent,
+        frame: DiagnosticFrame? = null,
+        bytes: Int? = null,
+        entries: Int? = null,
+        total: Int? = null,
+        closeCode: Int? = null,
+        retryMs: Long? = null,
+        issue: WireIssue? = null,
+        transportIssue: TransportIssue? = null,
+        protocol: Int? = protocolVersion,
+    ) {
+        diagnostics?.invoke(
+            CollabDiagnostic(
+                event = event, activation = activationId, attempt = attemptId, welcomed = welcomed,
+                frame = frame, bytes = bytes, entries = entries, total = total, closeCode = closeCode,
+                retryMs = retryMs, issue = issue, transportIssue = transportIssue, protocol = protocol,
+            ),
+        )
+    }
+
+    private fun classifyTransportFailure(error: Throwable): TransportIssue = when (error) {
+        is UnknownHostException -> TransportIssue.DNS
+        is SSLException -> TransportIssue.TLS
+        is SocketTimeoutException -> TransportIssue.TIMEOUT
+        is IOException -> TransportIssue.IO
+        else -> TransportIssue.OTHER
+    }
 
     private fun isLiveAttempt(): Boolean =
         status !is ConnectionStatus.Paused &&

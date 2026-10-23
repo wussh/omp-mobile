@@ -302,3 +302,34 @@ OMP process or authenticated model/provider. These checks do not substitute for 
 real-host V4/V5 matrix, physical Wi-Fi/cellular handoff, background execution, or an API-26 device run.
 The debug APK is `dist/omp-mobile-0.1.0-debug.apk`; its adjacent SHA256 file is the delivery checksum.
 
+### QR session-frame compatibility and safe diagnostics
+
+- Host history can include internal message roles (`bashExecution`, `pythonExecution`) and
+  provider replay blocks outside the rendered wire subset. Unknown roles still count toward the
+  snapshot but are not rendered; unknown block types are skipped without dropping known text or
+  tool calls. Missing required fields remain terminal protocol errors, not retry loops.
+- The debug APK logs structured `OmpCollab` records for connection attempts, socket open/hello,
+  welcome/snapshot/ready, transport failures, close codes, retry delays and parser/decryption
+  failures. Records contain only enums and numeric metadata: local activation/socket epochs,
+  encrypted wire-frame byte sizes, entry counts, protocol version and validation codes.
+  Pairing links, room IDs, keys/tokens, nicknames, paths, chat/tool/image content, remote close
+  reasons and raw exception messages/causes are not logged. Streaming updates produce no logs.
+  Release builds do not install the diagnostic callback.
+- Parser errors also display the safe frame/validation code and wire size in the connection
+  banner, for example `SNAPSHOT_CHUNK/CONTENT_TYPE; 195 bytes`.
+- To collect debug connection logs, run `adb logcat -s OmpCollab:D '*:S'`, reproduce the issue,
+  and report the safe error code and filtered log rather than a pairing QR/link.
+- Cluster verification: **79 JVM tests, zero failures/errors; 10 Android tests passed on API 36**.
+  The previously shipped APK reproduced `Failed: Invalid session frame` after native QR-gallery
+  pairing. The repaired APK connected, rendered the retained assistant text, accepted live
+  updates, automatically rejoined after a socket close, and reported a deliberately malformed
+  frame with safe diagnostics. Credential/payload exclusion was checked against captured logs.
+- This repair used the published `@oh-my-pi/pi-coding-agent@18.12.6` production `CollabHost` and
+  `SessionManager` with an in-process test relay and test TUI context, **not an authenticated
+  model/provider run**. Evidence is under `evidence/qr-parser-fix/`; the original physical
+  Wi-Fi/cellular and real-model acceptance limits remain unchanged.
+- This build uses a fresh cluster debug signing key. Android rejected an in-place update over
+  the previous debug APK with `INSTALL_FAILED_UPDATE_INCOMPATIBLE`; clean installation passed.
+  If updating is rejected, uninstall the old debug app and pair again. Uninstalling removes
+  its locally saved pairings/settings. No production signing key was requested or introduced.
+

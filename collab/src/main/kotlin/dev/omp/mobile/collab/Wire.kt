@@ -56,6 +56,12 @@ data class WireUsage(
 sealed interface WireMessage {
     val timestamp: Long
 
+    /** Host-internal or newer roles still count toward snapshot progress, but are not rendered. */
+    data class Unknown(
+        val role: String,
+        override val timestamp: Long,
+    ) : WireMessage
+
     data class User(
         val content: MessageContent,
         val synthetic: Boolean,
@@ -467,6 +473,15 @@ fun parseHostFrame(text: String, fallbackEntryId: String = "unknown-entry"): Hos
         throw WireFormatException("Malformed host frame", e)
     } ?: throw WireFormatException("Host frame is not a JSON object")
 
+    try {
+        return parseHostObject(obj, fallbackEntryId)
+    } catch (e: WireFormatException) {
+        e.frame = diagnosticFrame(obj.string("t"))
+        throw e
+    }
+}
+
+private fun parseHostObject(obj: JsonObject, fallbackEntryId: String): HostFrame {
     val type = obj.string("t") ?: return HostFrame.Unknown(null)
     return when (type) {
         "welcome" -> {
@@ -608,7 +623,7 @@ fun parseMessage(element: JsonElement): WireMessage {
         )
 
         "assistant" -> WireMessage.Assistant(
-            content = obj["content"]?.jsonArrayOrThrow()?.map { parseContentBlock(it) } ?: emptyList(),
+            content = obj["content"]?.jsonArrayOrThrow()?.mapNotNull { parseContentBlock(it) } ?: emptyList(),
             model = obj.string("model") ?: "",
             usage = obj["usage"]?.let { runCatching { WireJson.decodeFromJsonElement(WireUsage.serializer(), it) }.getOrNull() }
                 ?: WireUsage(),
@@ -620,25 +635,26 @@ fun parseMessage(element: JsonElement): WireMessage {
         "toolResult" -> WireMessage.ToolResult(
             toolCallId = obj.string("toolCallId") ?: "",
             toolName = obj.string("toolName") ?: "",
-            content = obj["content"]?.jsonArrayOrThrow()?.map { parseContentBlock(it) } ?: emptyList(),
+            content = obj["content"]?.jsonArrayOrThrow()?.mapNotNull { parseContentBlock(it) } ?: emptyList(),
             details = obj["details"],
             isError = obj.boolean("isError") == true,
             timestamp = timestamp,
         )
 
-        else -> throw WireFormatException("unknown message role")
+        else -> WireMessage.Unknown(role, timestamp)
     }
 }
 
 private fun parseMessageContent(element: JsonElement): MessageContent = when (element) {
     is JsonPrimitive -> MessageContent.Text(element.contentOrNull ?: "")
-    is JsonArray -> MessageContent.Blocks(element.map { parseContentBlock(it) })
+    is JsonArray -> MessageContent.Blocks(element.mapNotNull { parseContentBlock(it) })
     else -> throw WireFormatException("message content invalid")
 }
 
-private fun parseContentBlock(element: JsonElement): ContentBlock {
+private fun parseContentBlock(element: JsonElement): ContentBlock? {
     val obj = element as? JsonObject ?: throw WireFormatException("content block is not an object")
-    return when (val type = obj.string("type")) {
+    val type = obj.string("type") ?: throw WireFormatException("content block.type missing")
+    return when (type) {
         "text" -> ContentBlock.Text(obj.string("text") ?: "")
         "image" -> ContentBlock.Image(obj.string("data") ?: "", obj.string("mimeType") ?: "image/png")
         "thinking" -> ContentBlock.Thinking(obj.string("thinking") ?: "")
@@ -650,7 +666,7 @@ private fun parseContentBlock(element: JsonElement): ContentBlock {
             intent = obj.string("intent"),
         )
 
-        else -> throw WireFormatException("unknown content block type", null)
+        else -> null // Provider replay blocks and newer content variants are not guest-renderable.
     }
 }
 
@@ -797,7 +813,30 @@ fun parseSubagentLifecycle(data: JsonElement?): SubagentLifecyclePayload? {
     )
 }
 
-class WireFormatException(message: String, cause: Throwable? = null) : Exception(message, cause)
+class WireFormatException(message: String, cause: Throwable? = null) : Exception(message, cause) {
+    var frame: DiagnosticFrame = DiagnosticFrame.UNKNOWN
+        internal set
+
+    // The underlying serialization cause can contain JSON excerpts. Never log it.
+    val issue: WireIssue
+        get() = when (message) {
+            "Malformed host frame" -> WireIssue.JSON
+            "Host frame is not a JSON object" -> WireIssue.FRAME_OBJECT
+            "welcome.proto missing" -> WireIssue.WELCOME_PROTOCOL
+            "welcome.header invalid" -> WireIssue.WELCOME_HEADER
+            "welcome.state invalid", "state invalid" -> WireIssue.WELCOME_STATE
+            "welcome.agents invalid" -> WireIssue.WELCOME_AGENTS
+            "welcome.entryCount missing" -> WireIssue.WELCOME_ENTRY_COUNT
+            "message is not an object" -> WireIssue.MESSAGE_OBJECT
+            "message.role missing" -> WireIssue.MESSAGE_ROLE
+            "message content invalid" -> WireIssue.MESSAGE_CONTENT
+            "content block is not an object" -> WireIssue.CONTENT_BLOCK
+            "content block.type missing" -> WireIssue.CONTENT_TYPE
+            "event is not an object" -> WireIssue.EVENT_OBJECT
+            "ui request is not an object", "ui request.reqId missing" -> WireIssue.UI_REQUEST
+            else -> WireIssue.FRAME_STRUCTURE
+        }
+}
 
 private fun JsonObject.string(key: String): String? =
     (this[key] as? JsonPrimitive)?.contentOrNull
