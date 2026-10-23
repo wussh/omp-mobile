@@ -19,9 +19,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -33,7 +33,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -54,6 +53,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -61,8 +61,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omp.mobile.R
@@ -79,7 +80,6 @@ import dev.omp.mobile.collab.SessionEntry
 import dev.omp.mobile.collab.ThinkingLevelChangeEntry
 import dev.omp.mobile.collab.UnknownEntry
 import dev.omp.mobile.collab.WireMessage
-import java.util.Locale
 
 @Composable
 fun ChatScreen(
@@ -96,6 +96,12 @@ fun ChatScreen(
     val attachments by viewModel.attachments.collectAsStateWithLifecycle()
     val preparingImages by viewModel.preparingImages.collectAsStateWithLifecycle()
     val sendingPrompt by viewModel.sendingPrompt.collectAsStateWithLifecycle()
+    var showDetails by rememberSaveable { mutableStateOf(false) }
+    val focusManager = LocalFocusManager.current
+    val openDetails: () -> Unit = {
+        focusManager.clearFocus()
+        showDetails = true
+    }
     val replica = session.replica
     val latestTodoCallId = remember(replica.toolResults) { latestTodoResult(replica.toolResults)?.toolCallId }
 
@@ -136,7 +142,11 @@ fun ChatScreen(
 
     Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize()) {
-            Header(session)
+            ChatHeaderBar(
+                session = session,
+                onOpenSessions = onOpenSessions,
+                onOpenDetails = openDetails,
+            )
             ConnectionBanner(
                 session = session,
                 onRetry = viewModel::retry,
@@ -278,6 +288,7 @@ fun ChatScreen(
                 onRemoveImage = viewModel::removeImage,
                 onSend = viewModel::send,
                 onInterrupt = viewModel::interrupt,
+                onOpenDetails = openDetails,
             )
         }
 
@@ -298,57 +309,11 @@ fun ChatScreen(
                 )
             }
         }
-    }
-}
 
-@Composable
-private fun Header(session: dev.omp.mobile.data.CollabSessionState) {
-    val replica = session.replica
-    val state = replica.state
-    val title = replica.header?.title
-        ?: state?.sessionName
-        ?: session.pairingLabel
-        ?: "Chat"
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                title,
-                style = MaterialTheme.typography.headlineSmall,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
-            AssistChip(
-                onClick = {},
-                label = { Text(if (session.readOnly || !session.hasWriteToken) "View" else "Control") },
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            cwdBasename(state?.cwd)?.let {
-                Text(it, style = MaterialTheme.typography.bodySmall)
-            }
-            state?.model?.let { model ->
-                val name = model.name.ifBlank { model.id }
-                if (name.isNotBlank()) Text(name, style = MaterialTheme.typography.bodySmall)
-            }
-            state?.contextUsage?.percent?.let {
-                Text(String.format(Locale.US, "ctx %.0f%%", it), style = MaterialTheme.typography.bodySmall)
-            }
-            state?.queuedMessageCount?.takeIf { it > 0 }?.let {
-                Text("queued $it", style = MaterialTheme.typography.bodySmall)
-            }
-            if (session.status == ConnectionStatus.Connected) {
-                Text("Connected", style = MaterialTheme.typography.labelSmall)
-            }
-        }
-        val subs = replica.agents.filter { it.kind == "sub" }
-        if (subs.isNotEmpty()) {
-            Text(
-                "subagents: ${subs.size} (${subs.count { it.status == "running" }} running)",
-                style = MaterialTheme.typography.bodySmall,
+        if (showDetails) {
+            SessionDetailsDialog(
+                session = session,
+                onDismiss = { showDetails = false },
             )
         }
     }
@@ -362,17 +327,7 @@ private fun ConnectionBanner(
     onOpenSessions: () -> Unit,
 ) {
     val status = session.status
-    val text = when (status) {
-        ConnectionStatus.Connecting -> "Connecting…"
-        is ConnectionStatus.Syncing -> "Syncing ${status.received}/${status.total}…"
-        ConnectionStatus.Connected -> ""
-        is ConnectionStatus.Reconnecting -> "Reconnecting (attempt ${status.attempt})…"
-        ConnectionStatus.WaitingForNetwork -> "Waiting for network…"
-        ConnectionStatus.Paused -> "Paused while the app is in the background. Reopen it to reconnect."
-        ConnectionStatus.Idle -> "Not connected."
-        is ConnectionStatus.Ended -> "Session ended: ${status.reason}"
-        is ConnectionStatus.Failed -> "Failed: ${status.message}"
-    }
+    val text = connectionStatusText(status)
     AnimatedVisibility(
         visible = status != ConnectionStatus.Connected,
         enter = fadeIn(tween(180)) + expandVertically(tween(220)),
@@ -434,6 +389,7 @@ private fun Composer(
     onRemoveImage: (String) -> Unit,
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
+    onOpenDetails: () -> Unit,
 ) {
     val busy = session.replica.working || session.replica.state?.isStreaming == true
     val imagePicker = rememberLauncherForActivityResult(
@@ -561,10 +517,23 @@ private fun Composer(
         if (interruptPending) {
             Text("Waiting for the host to stop…", style = MaterialTheme.typography.labelSmall)
         }
-        Text(
-            "Foreground only. Prompts have no ACK: check the transcript after resync before sending again.",
-            style = MaterialTheme.typography.labelSmall,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "Foreground only · no delivery ACK",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(
+                onClick = onOpenDetails,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .testTag(ChatHeaderTags.ComposerDetails),
+            ) { Text("Details") }
+        }
     }
 }
 

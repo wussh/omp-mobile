@@ -333,3 +333,43 @@ The debug APK is `dist/omp-mobile-0.1.0-debug.apk`; its adjacent SHA256 file is 
   If updating is rejected, uninstall the old debug app and pair again. Uninstalling removes
   its locally saved pairings/settings. No production signing key was requested or introduced.
 
+### Native mobile UX and custom-result repair
+
+- Replaced the inert custom-message chip with an expandable card. Advisor cards prefer
+  `details.notes`, report severity/advisor/age, and fall back to the host's line-delimited
+  `<advisory>` batches when details are missing or malformed. Empty updates explain that the
+  host supplied no note text. Unknown severity labels remain unknown rather than becoming
+  a fabricated blocker/concern. Visibility still respects the host's `display` flag: the
+  production advisor and async-result producers explicitly send `display: true`.
+- Reproduced an expanded but blank `async-result` on the installed APK: the host's
+  `<system-notice>` envelope was interpreted as a Markdown HTML block. Async output now uses
+  selectable native monospace text, removing only the complete outer notice envelope.
+  Nested task metadata, literal tags and indentation remain visible; attached image blocks
+  still use the existing bounded native image decoder. No HTML execution or remote fetch.
+- Added a real auto-mirrored vector Back button to the compact chat app bar. It returns to
+  Sessions; system Back from Chat/Settings does the same. Full title, access, model/context,
+  connection, lifecycle and no-ACK delivery information are in a scrollable Details dialog,
+  also reachable from the composer. The title no longer competes with a decorative access
+  chip or duplicate status lines.
+- Session cards open directly; opening the already selected pairing does not reconnect.
+  Rename/Remove live in an overflow menu with the existing confirmation flow. Subagents
+  have a collapsed status summary and retain their bounded expanded controls.
+- Compact windows retain bottom navigation; windows at least 600 dp use a navigation rail.
+  Main content is centered with an 840 dp maximum width. Settings typography and IME insets
+  follow the same native layout hierarchy.
+- Design references: [Orca mobile companion](https://www.onorca.dev/docs/mobile) for compact
+  context, glanceable agent state and progressive disclosure, and
+  [Android adaptive navigation](https://developer.android.com/develop/ui/compose/layouts/adaptive/build-adaptive-navigation)
+  for width-appropriate native navigation. This is not a terminal clone or unsupported model editor.
+- Verification on tbs-dev: **98 JVM tests, zero failures/errors; 10 installed Android tests
+  passed on API 36; debug and instrumentation APK builds passed**. Native tap scenarios
+  exercised advisor expand/collapse, structured/legacy/empty/unknown-severity notes,
+  generic custom messages, async-result before/after, header/composer Details, Back,
+  session reopening and Rename/Remove cancellation. App dark mode, 1.3 font scale and a
+  1600×2560 emulator window at density 240 were exercised. No runtime crash was recorded.
+  Screenshots and the APK hash/result record are in `evidence/mobile-ux/`.
+- These UI interactions used a synthetic encrypted wire-3 host with production-shaped custom
+  messages, not authenticated model/provider calls. Tablet evidence is a resized emulator,
+  not physical tablet testing; hardware animation smoothness and physical network handoff
+  remain unverified. The APK and adjacent SHA256 in `dist/` are the current delivery.
+

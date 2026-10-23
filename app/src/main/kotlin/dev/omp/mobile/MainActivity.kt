@@ -1,10 +1,17 @@
 package dev.omp.mobile
 
 import android.os.Bundle
+import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.animation.AnimatedContent
@@ -17,6 +24,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.ShortNavigationBar
 import androidx.compose.material3.ShortNavigationBarItem
 import androidx.compose.material3.Icon
@@ -33,6 +42,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
@@ -100,6 +110,10 @@ private fun OmpApp(
     val pairingResult by sessionsViewModel.pairingResult.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
 
+    BackHandler(enabled = !showPairing && tab != MainTab.SESSIONS) {
+        tabName = MainTab.SESSIONS.name
+    }
+
     LaunchedEffect(pairingResult) {
         when (val result = pairingResult) {
             is PairingResult.Saved -> {
@@ -143,54 +157,81 @@ private fun OmpApp(
             )
         }
     } else {
-        Scaffold(
-            snackbarHost = { SnackbarHost(snackbar) },
-            bottomBar = {
-                ShortNavigationBar {
-                    MainTab.values().forEach { item ->
-                        ShortNavigationBarItem(
-                            selected = tab == item,
-                            onClick = { tabName = item.name },
-                            icon = {
-                                Icon(
-                                    painter = painterResource(item.icon),
-                                    contentDescription = null,
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val expanded = maxWidth >= 600.dp
+            Scaffold(
+                snackbarHost = { SnackbarHost(snackbar) },
+                bottomBar = {
+                    if (!expanded) {
+                        ShortNavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+                            MainTab.entries.forEach { item ->
+                                ShortNavigationBarItem(
+                                    selected = tab == item,
+                                    onClick = { tabName = item.name },
+                                    icon = { Icon(painterResource(item.icon), contentDescription = null) },
+                                    label = { Text(item.label) },
+                                )
+                            }
+                        }
+                    }
+                },
+            ) { padding ->
+                Row(Modifier.fillMaxSize().padding(padding)) {
+                    if (expanded) {
+                        NavigationRail(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            windowInsets = WindowInsets(0),
+                            header = {
+                                Text(
+                                    "OMP",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    modifier = Modifier.padding(vertical = 16.dp),
                                 )
                             },
-                            label = { Text(item.label) },
-                        )
+                        ) {
+                            MainTab.entries.forEach { item ->
+                                NavigationRailItem(
+                                    selected = tab == item,
+                                    onClick = { tabName = item.name },
+                                    icon = { Icon(painterResource(item.icon), contentDescription = null) },
+                                    label = { Text(item.label) },
+                                )
+                            }
+                        }
                     }
-                }
-            },
-        ) { padding ->
-            AnimatedContent(
-                targetState = tab,
-                modifier = Modifier.fillMaxSize().padding(padding),
-                transitionSpec = {
-                    val forward = targetState.ordinal >= initialState.ordinal
-                    val direction = if (forward) 1 else -1
-                    (fadeIn(tween(220)) + slideInHorizontally(tween(260)) { it / 8 * direction }) togetherWith
-                        (fadeOut(tween(120)) + slideOutHorizontally(tween(180)) { -it / 10 * direction })
-                },
-                label = "main-tab",
-            ) { currentTab ->
-                when (currentTab) {
-                    MainTab.SESSIONS -> SessionsScreen(
-                        viewModel = sessionsViewModel,
-                        onPairRequested = {
-                            pendingError = null
-                            showPairing = true
+                    AnimatedContent(
+                        targetState = tab,
+                        modifier = Modifier.weight(1f).fillMaxSize(),
+                        transitionSpec = {
+                            val direction = if (targetState.ordinal >= initialState.ordinal) 1 else -1
+                            (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 12 * direction }) togetherWith
+                                (fadeOut(tween(100)) + slideOutHorizontally(tween(160)) { -it / 12 * direction })
                         },
-                        onOpenChat = { tabName = MainTab.CHAT.name },
-                    )
+                        label = "main-tab",
+                    ) { currentTab ->
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                            Box(Modifier.fillMaxHeight().widthIn(max = 840.dp).fillMaxWidth()) {
+                                when (currentTab) {
+                                    MainTab.SESSIONS -> SessionsScreen(
+                                        viewModel = sessionsViewModel,
+                                        onPairRequested = {
+                                            pendingError = null
+                                            showPairing = true
+                                        },
+                                        onOpenChat = { tabName = MainTab.CHAT.name },
+                                    )
 
-                    MainTab.CHAT -> ChatScreen(
-                        viewModel = chatViewModel,
-                        agentControlsViewModel = agentControlsViewModel,
-                        onOpenSessions = { tabName = MainTab.SESSIONS.name },
-                    )
+                                    MainTab.CHAT -> ChatScreen(
+                                        viewModel = chatViewModel,
+                                        agentControlsViewModel = agentControlsViewModel,
+                                        onOpenSessions = { tabName = MainTab.SESSIONS.name },
+                                    )
 
-                    MainTab.SETTINGS -> SettingsScreen(settingsViewModel)
+                                    MainTab.SETTINGS -> SettingsScreen(settingsViewModel)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

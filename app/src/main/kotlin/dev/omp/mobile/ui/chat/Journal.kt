@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.shrinkVertically
@@ -20,11 +21,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -42,14 +43,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -57,6 +61,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
@@ -64,7 +69,11 @@ import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.rememberMarkdownState
 import dev.omp.mobile.R
+import dev.omp.mobile.collab.ADVISOR_MESSAGE_TYPE
+import dev.omp.mobile.collab.ASYNC_RESULT_MESSAGE_TYPE
 import dev.omp.mobile.collab.ActiveTool
+import dev.omp.mobile.collab.AdvisorNoteView
+import dev.omp.mobile.collab.AdvisorSeverity
 import dev.omp.mobile.collab.BranchSummaryEntry
 import dev.omp.mobile.collab.COLLAB_PROMPT_MESSAGE_TYPE
 import dev.omp.mobile.collab.CompactionEntry
@@ -76,7 +85,10 @@ import dev.omp.mobile.collab.ModelChangeEntry
 import dev.omp.mobile.collab.SessionEntry
 import dev.omp.mobile.collab.ThinkingLevelChangeEntry
 import dev.omp.mobile.collab.WireMessage
+import dev.omp.mobile.collab.advisorCard
+import dev.omp.mobile.collab.asyncResultText
 import dev.omp.mobile.collab.fromParticipant
+import dev.omp.mobile.collab.messageContentText
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.BoldHighlight
 import dev.snipme.highlights.model.ColorHighlight
@@ -127,10 +139,7 @@ fun JournalRow(
             if (entry.customType == COLLAB_PROMPT_MESSAGE_TYPE) {
                 UserRow(entry.fromParticipant(), entry.content, entry.timestamp)
             } else if (entry.display) {
-                Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                    AssistChip(onClick = {}, label = { Text(entry.customType) })
-                    MessageContentBlock(entry.content)
-                }
+                CustomMessageCard(entry)
             }
         }
 
@@ -139,6 +148,296 @@ fun JournalRow(
         is ModelChangeEntry -> MarkerText("model → ${entry.model}")
         is ThinkingLevelChangeEntry -> MarkerText("thinking → ${entry.thinkingLevel ?: "off"}")
         else -> Unit
+    }
+}
+
+@Composable
+private fun CustomMessageCard(entry: CustomMessageEntry) {
+    if (entry.customType == ADVISOR_MESSAGE_TYPE) {
+        AdvisorCard(entry)
+    } else {
+        GenericCustomMessageCard(entry)
+    }
+}
+
+@Composable
+private fun AdvisorCard(entry: CustomMessageEntry) {
+    val model = remember(entry.details, entry.content) { advisorCard(entry.details, entry.content) }
+    var expanded by remember(entry.id) { mutableStateOf(false) }
+    val expandable = model.notes.isNotEmpty()
+    val meta = buildString {
+        append(model.notes.size)
+        append(if (model.notes.size == 1) " note" else " notes")
+        if (model.blockerCount > 0) {
+            append(" · ")
+            append(model.blockerCount)
+            append(if (model.blockerCount == 1) " blocker" else " blockers")
+        }
+    }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = MaterialTheme.shapes.largeIncreased,
+    ) {
+        Column(
+            Modifier.padding(12.dp).animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            ExpandableCardHeader(
+                iconRes = R.drawable.ic_advisor,
+                title = "Advisor",
+                meta = if (expandable) meta else "No notes",
+                expanded = expanded,
+                expandable = expandable,
+                onToggle = { expanded = !expanded },
+            )
+            if (!expandable) {
+                Text(
+                    "The host sent an advisor update without note text.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = fadeIn() + expandVertically(),
+                    exit = shrinkVertically(),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        model.notes.forEachIndexed { index, note ->
+                            if (index > 0) HorizontalDivider()
+                            AdvisorNoteRow(note)
+                        }
+                    }
+                }
+                if (!expanded) {
+                    model.notes.firstOrNull()?.text?.let { note ->
+                        Text(
+                            note.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(start = 30.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AdvisorNoteRow(note: AdvisorNoteView) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            note.severityLabel?.let { label -> SeverityPill(label = label, severity = note.severity) }
+            note.advisor?.takeIf { it != "default" }?.let { advisor ->
+                Text(
+                    advisor,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+            }
+            note.turnsAgo?.let { ago ->
+                Text(
+                    "T-$ago",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        MarkdownText(note.text)
+    }
+}
+
+@Composable
+private fun SeverityPill(label: String, severity: AdvisorSeverity?) {
+    val colors = MaterialTheme.colorScheme
+    val container = when (severity) {
+        AdvisorSeverity.Blocker -> colors.errorContainer
+        AdvisorSeverity.Concern -> colors.tertiaryContainer
+        AdvisorSeverity.Nit, null -> colors.surfaceContainerHighest
+    }
+    val content = when (severity) {
+        AdvisorSeverity.Blocker -> colors.onErrorContainer
+        AdvisorSeverity.Concern -> colors.onTertiaryContainer
+        AdvisorSeverity.Nit, null -> colors.onSurfaceVariant
+    }
+    Text(
+        label,
+        style = MaterialTheme.typography.labelSmall,
+        color = content,
+        modifier = Modifier
+            .background(color = container, shape = MaterialTheme.shapes.small)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
+}
+
+@Composable
+private fun GenericCustomMessageCard(entry: CustomMessageEntry) {
+    val asyncResult = entry.customType == ASYNC_RESULT_MESSAGE_TYPE
+    val body = remember(entry.content, asyncResult) {
+        val text = messageContentText(entry.content)
+        if (asyncResult) asyncResultText(text) else text
+    }
+    var expanded by remember(entry.id) { mutableStateOf(false) }
+    val expandable = when (val content = entry.content) {
+        is MessageContent.Text -> body.isNotBlank()
+        is MessageContent.Blocks -> body.isNotBlank() || content.blocks.any { it is ContentBlock.Image }
+    }
+    val preview = body.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    val title = entry.customType
+        .split('-', '_')
+        .filter(String::isNotBlank)
+        .joinToString(" ") { word -> word.replaceFirstChar { it.uppercase() } }
+        .ifBlank { "Custom message" }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = MaterialTheme.shapes.largeIncreased,
+    ) {
+        Column(
+            Modifier.padding(12.dp).animateContentSize(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            ExpandableCardHeader(
+                iconRes = R.drawable.ic_chat,
+                title = title,
+                meta = null,
+                expanded = expanded,
+                expandable = expandable,
+                onToggle = { expanded = !expanded },
+            )
+            if (!expandable) {
+                Text(
+                    "The host sent this message without displayable text.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = fadeIn() + expandVertically(),
+                    exit = shrinkVertically(),
+                ) {
+                    if (asyncResult) {
+                        AsyncResultContent(entry.content)
+                    } else {
+                        MessageContentBlock(entry.content)
+                    }
+                }
+                if (!expanded) {
+                    Text(
+                        preview.ifBlank { "Attachment" },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(start = 30.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Async output is preformatted text, not Markdown: HTML-like job output must stay visible. */
+@Composable
+private fun AsyncResultContent(content: MessageContent) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        when (content) {
+            is MessageContent.Text -> AsyncResultText(content.text)
+            is MessageContent.Blocks -> content.blocks.forEach { block ->
+                when (block) {
+                    is ContentBlock.Text -> AsyncResultText(block.text)
+                    is ContentBlock.Image -> InlineImage(block)
+                    else -> Unit
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AsyncResultText(text: String) {
+    val output = remember(text) { asyncResultText(text) }
+    SelectionContainer {
+        Text(
+            output,
+            style = MaterialTheme.typography.bodySmall,
+            fontFamily = FontFamily.Monospace,
+        )
+    }
+}
+
+@Composable
+private fun ExpandableCardHeader(
+    iconRes: Int,
+    title: String,
+    meta: String?,
+    expanded: Boolean,
+    expandable: Boolean,
+    onToggle: () -> Unit,
+) {
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "cardChevron",
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable(
+                enabled = expandable,
+                onClickLabel = if (expandable) {
+                    if (expanded) "Collapse" else "Expand"
+                } else {
+                    null
+                },
+                role = if (expandable) Role.Button else null,
+                onClick = onToggle,
+            )
+            .semantics {
+                if (expandable) stateDescription = if (expanded) "Expanded" else "Collapsed"
+            },
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(iconRes),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall)
+            meta?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        if (expandable) {
+            Icon(
+                painter = painterResource(R.drawable.ic_advisor_chevron),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(24.dp).rotate(rotation),
+            )
+        }
     }
 }
 
@@ -202,8 +501,21 @@ fun AssistantRow(
             }
         }
         if (!pending && (message.stopReason == "error" || message.stopReason == "aborted")) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                AssistChip(onClick = {}, label = { Text(message.stopReason) })
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Stopped · ${message.stopReason}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .background(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = MaterialTheme.shapes.small,
+                        )
+                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                )
                 message.errorMessage?.takeIf(String::isNotBlank)?.let {
                     Text(it, style = MaterialTheme.typography.bodySmall)
                 }

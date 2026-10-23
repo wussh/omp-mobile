@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -41,11 +42,17 @@ fun SettingsScreen(viewModel: SettingsViewModel) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Settings", style = MaterialTheme.typography.displaySmall)
+        Text("Settings", style = MaterialTheme.typography.headlineLarge)
+        Text(
+            "Personalize your mobile workspace",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
         Text("Nickname", style = MaterialTheme.typography.titleMedium)
         Text(

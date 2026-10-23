@@ -6,16 +6,21 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Button
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Card
@@ -37,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omp.mobile.R
+import dev.omp.mobile.collab.ConnectionStatus
 import dev.omp.mobile.data.SavedPairing
 
 @Composable
@@ -63,10 +69,11 @@ fun SessionsScreen(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     "Sessions",
-                    style = MaterialTheme.typography.displaySmall,
+                    style = MaterialTheme.typography.headlineLarge,
                 )
                 Text(
-                    "Pairings are stored on this device; this list is not a claim that the host is active.",
+                    if (pairings.isEmpty()) "Connect to your OMP host"
+                    else "${pairings.size} saved · One connection at a time",
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
@@ -124,53 +131,93 @@ fun SessionsScreen(
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(pairings, key = { it.id }) { pairing ->
                     val selected = session.pairingId == pairing.id
+                    var menuExpanded by remember(pairing.id) { mutableStateOf(false) }
                     Card(
+                        onClick = {
+                            if (!selected) viewModel.select(pairing.id)
+                            onOpenChat()
+                        },
                         modifier = Modifier.fillMaxWidth().animateItem(),
-                        shape = MaterialTheme.shapes.largeIncreased,
+                        shape = MaterialTheme.shapes.large,
                         colors = CardDefaults.cardColors(
-                            containerColor = if (selected) {
-                                MaterialTheme.colorScheme.primaryContainer
-                            } else {
-                                MaterialTheme.colorScheme.surfaceContainerHigh
-                            },
+                            containerColor = if (selected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceContainerLow,
                         ),
                     ) {
                         Column(
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    painterResource(R.drawable.ic_sessions),
+                                    contentDescription = null,
+                                    modifier = Modifier.padding(end = 12.dp).size(24.dp),
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        pairing.label,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        pairing.relayHost,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Box {
+                                    IconButton(onClick = { menuExpanded = true }) {
+                                        Icon(
+                                            painterResource(R.drawable.ic_more_vert),
+                                            contentDescription = "Pairing options for ${pairing.label}",
+                                        )
+                                    }
+                                    DropdownMenu(
+                                        expanded = menuExpanded,
+                                        onDismissRequest = { menuExpanded = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("Rename") },
+                                            onClick = { menuExpanded = false; renameTarget = pairing },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text("Remove") },
+                                            onClick = { menuExpanded = false; forgetTarget = pairing },
+                                        )
+                                    }
+                                }
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    shape = MaterialTheme.shapes.small,
+                                ) {
+                                    Text(
+                                        pairing.accessLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    )
+                                }
                                 Text(
-                                    pairing.label,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
+                                    if (selected) sessionListStatus(session.status) else "Saved · Tap to open",
+                                    style = MaterialTheme.typography.labelMedium,
                                     modifier = Modifier.weight(1f),
                                 )
-                                AssistChip(
-                                    onClick = {},
-                                    label = { Text(pairing.accessLabel) },
-                                )
                             }
-                            Text("${pairing.relayHost} · room ${pairing.roomId}", style = MaterialTheme.typography.bodySmall)
                             Text(
-                                if (selected) "Selected pairing" else "Saved pairing",
+                                "Room ${pairing.roomId}",
                                 style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Button(
-                                    onClick = {
-                                        viewModel.select(pairing.id)
-                                        onOpenChat()
-                                    },
-                                    enabled = !selected,
-                                    shape = CircleShape,
-                                ) { Text(if (selected) "Active" else "Open") }
-                                TextButton(onClick = { renameTarget = pairing }) { Text("Rename") }
-                                TextButton(onClick = { forgetTarget = pairing }) { Text("Remove") }
-                            }
                         }
                     }
                 }
@@ -225,4 +272,16 @@ fun SessionsScreen(
             },
         )
     }
+}
+
+private fun sessionListStatus(status: ConnectionStatus): String = when (status) {
+    ConnectionStatus.Connected -> "Connected · Tap to return"
+    ConnectionStatus.Connecting -> "Connecting"
+    is ConnectionStatus.Syncing -> "Syncing"
+    is ConnectionStatus.Reconnecting -> "Reconnecting"
+    ConnectionStatus.WaitingForNetwork -> "Waiting for network"
+    ConnectionStatus.Paused -> "Paused"
+    is ConnectionStatus.Failed -> "Connection failed"
+    is ConnectionStatus.Ended -> "Session ended"
+    ConnectionStatus.Idle -> "Selected · Tap to open"
 }

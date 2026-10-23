@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -17,6 +18,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -25,14 +27,21 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.omp.mobile.R
 
 /**
  * Collapsed-by-default subagent panel. Lists only agents the host reported
@@ -44,30 +53,43 @@ fun AgentControls(viewModel: AgentControlsViewModel) {
     val state by viewModel.ui.collectAsStateWithLifecycle()
     var expanded by rememberSaveable { mutableStateOf(false) }
 
+    val summary = remember(state.agents) {
+        state.agents.groupingBy { it.status.ifBlank { "unknown" } }.eachCount()
+            .entries.joinToString(" · ") { "${it.value} ${it.key}" }
+    }
     Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
+        if (state.agents.isNotEmpty() || expanded) Surface(
+            color = MaterialTheme.colorScheme.surfaceContainerLow,
+            shape = MaterialTheme.shapes.medium,
         ) {
-            TextButton(
-                onClick = { expanded = !expanded },
-                modifier = Modifier.heightIn(min = 48.dp),
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable(
+                        role = Role.Button,
+                        onClickLabel = if (expanded) "Hide subagents" else "Show subagents",
+                    ) { expanded = !expanded }
+                    .semantics { stateDescription = if (expanded) "Expanded" else "Collapsed" }
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(if (expanded) "Hide subagents" else "Show subagents (${state.agents.size})")
+                Column(Modifier.weight(1f)) {
+                    Text("Subagents (${state.agents.size})", style = MaterialTheme.typography.labelLarge)
+                    if (summary.isNotBlank()) {
+                        Text(
+                            summary,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+                Icon(
+                    painterResource(R.drawable.ic_arrow_down),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp).rotate(if (expanded) 180f else 0f),
+                )
             }
-            Text(
-                text = if (state.agents.isEmpty()) {
-                    "No subagents reported"
-                } else {
-                    state.agents
-                        .groupingBy { it.status.ifBlank { "unknown" } }
-                        .eachCount()
-                        .entries
-                        .joinToString(" · ") { "${it.value} ${it.key}" }
-                },
-                style = MaterialTheme.typography.bodySmall,
-                modifier = Modifier.weight(1f).padding(start = 8.dp),
-            )
         }
 
         if (expanded) {

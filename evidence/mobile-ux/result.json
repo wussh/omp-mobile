@@ -1,0 +1,34 @@
+{
+  "host": "synthetic encrypted wire3 UI fixture; no model/provider",
+  "api": "36",
+  "advisor": [
+    "structured",
+    "content fallback",
+    "empty",
+    "unknown severity"
+  ],
+  "customMessageExpansion": true,
+  "backAndSessionOptions": true,
+  "selectedSessionDoesNotReconnect": true,
+  "detailsAndSystemBack": true,
+  "appDarkMode": true,
+  "fontScale": 1.3,
+  "tabletPixels": "1600x2560 at density 240",
+  "runtimeCrashes": false,
+  "asyncResultExpandedOutputAndLiteralTags": true,
+  "jvmTests": {
+    "tests": 98,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "androidInstrumentedTests": 10,
+  "apk": {
+    "name": "app-debug.apk",
+    "bytes": 39581855,
+    "sha256": "a60407b7d7ab896fdaa28ac6f5475b3caba3bb17e3f2abe4149bf34f3c312e29",
+    "clusterHashMatches": true,
+    "zipIntegrity": true
+  },
+  "largeFontScrollToLastContent": true
+}
