@@ -1,5 +1,7 @@
 # OMP Mobile — Direct Collab Android Native
 
+> Catatan implementasi saat ini: APK debug memakai package `dev.omp.mobile.debug` dan label **OMP Mobile Debug**, terpisah dari aplikasi lama `dev.omp.mobile`. Namespace Kotlin tetap `dev.omp.mobile`. Gunakan `scripts/build-debug-kube.sh` dengan signing key persisten; jangan membuat debug keystore baru di pod sementara. Rincian toolchain awal di bawah merupakan baseline rencana.
+
 ## Context
 Bangun aplikasi Android native Kotlin + Jetpack Compose untuk Phase1–2: QR/link pairing, transcript dan control agent, kredensial aman, serta reconnect/resync. OMP/model tetap berjalan di host; aplikasi memakai protokol `/collab` resmi tanpa backend tambahan. Koneksi hanya foreground dan dipulihkan saat dibuka kembali; transcript mengikuti jurnal kronologis client web `/collab`, bukan rekonstruksi cabang aktif TUI. Gateway/discovery room baru tidak dibuat: room pengganti memerlukan link baru.
 
@@ -182,14 +184,13 @@ Buat `app/src/androidTest/kotlin/dev/omp/mobile/data/PairingStoreInstrumentedTes
 
 Sesudah integrasi, jalankan sekali dari root Android:
 ```sh
-java -version
+# Build hanya di Kubernetes; script memakai signing key persisten.
+bash scripts/build-debug-kube.sh
 adb devices -l
-./gradlew :collab:test :app:assembleDebug :app:assembleDebugAndroidTest
-./gradlew :app:connectedDebugAndroidTest
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n dev.omp.mobile/.MainActivity
+adb install -r dist/omp-mobile-0.1.0-debug.apk
+adb shell am start -n dev.omp.mobile.debug/dev.omp.mobile.MainActivity
 ```
-Jika beberapa device aktif, pilih satu melalui ANDROID_SERIAL untuk rangkaian ini. Artefak installable adalah `app/build/outputs/apk/debug/app-debug.apk`; signing/distribusi Play bukan syarat build ini.
+Jika beberapa device aktif, pilih satu melalui ANDROID_SERIAL. APK debug terdistribusi adalah `dist/omp-mobile-0.1.0-debug.apk`; aplikasi lama tidak perlu di-uninstall. Tes instrumentasi tetap memerlukan perangkat/emulator dan Gradle dijalankan hanya di pod, bukan workstation. Signing produksi/distribusi Play bukan syarat build ini.
 
 ### V4. Smoke end-to-end host nyata + layar native — langkah2–8
 Siapkan checkout upstream baru di direktori sementara, checkout commit baseline, lalu dari root checkout jalankan `bun install --frozen-lockfile` dan `bun run build:native` bila addon lokal belum tersedia (Cargo/Rust dan toolchain C/C++ adalah prasyarat host, bukan dependency APK). Mulai host dengan `bun run dev`; jangan menjalankan `bun run setup` karena script tersebut juga mengubah global link omp. Pada host dengan model aktif:
@@ -211,7 +212,7 @@ Gunakan host/room yang sama selama skenario; jangan menyelesaikan reconnect deng
 
 - Pada ponsel fisik dengan Wi-Fi dan data seluler aktif, biarkan Chat foreground; `adb shell svc wifi disable` lalu `adb shell svc wifi enable` memicu Wi-Fi→mobile→Wi-Fi. Tunggu Connected, tanpa scan ulang, transcript host lengkap tepat sekali, tidak ada prompt yang direplay. Jika shell tidak boleh mengatur radio, lakukan pergantian lewat OS; catat jika skenario itu juga menyebabkan background, bukan mengklaim pure foreground handoff.
 - Hilangkan semua jaringan, lalu pulihkan: WaitingForNetwork tanpa retry hot-loop, satu percobaan segera setelah network kembali. VPN on/off bila tersedia harus berujung resync yang sama, tanpa memaksa bypass VPN. Kembalikan setting radio perangkat ke kondisi semula.
-- `adb shell input keyevent KEYCODE_HOME`; buat entry baru melalui terminal host saat aplikasi background. `adb shell am start -n dev.omp.mobile/.MainActivity` → memakai pairing tersimpan dan entry baru muncul tepat sekali. Ulangi dengan `adb shell am force-stop dev.omp.mobile`, lalu buka kembali → Keystore/DataStore tetap bisa memulihkan pairing tanpa scan.
+- `adb shell input keyevent KEYCODE_HOME`; buat entry baru melalui terminal host saat aplikasi background. `adb shell am start -n dev.omp.mobile.debug/dev.omp.mobile.MainActivity` → memakai pairing tersimpan dan entry baru muncul tepat sekali. Ulangi dengan `adb shell am force-stop dev.omp.mobile.debug`, lalu buka kembali → Keystore/DataStore tetap bisa memulihkan pairing tanpa scan.
 - Untuk host/relay teardown race tanpa mematikan OMP, dari checkout jalankan `bun run collab:relay` (localhost7466), gunakan `/collab ws://localhost:7466`, dan `adb reverse tcp:7466 tcp:7466`. App debug memakai localhost, bukan10.0.2.2 yang ditolak parser plain-ws. Hentikan/restart proses relay lokal pada port sama; host tetap hidup → guest retry termasuk race4004, memperoleh full snapshot dan tidak menduplikasi ledger. Jangan memakai firewall/global network changes pada workstation untuk mensimulasikannya.
 - Saat guest live, host `/collab stop` → encrypted bye menghasilkan Ended dan retry berhenti. Stop host saat guest background → resume fresh mendapat RoomNotFound, bukan janji recovery. Buat room baru hanya untuk membuktikan link lama tidak menemukan room pengganti; scan/paste link baru diperlukan dan pairing lama tidak diam-diam ditimpa.
 
