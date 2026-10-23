@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0 — build 7
+
+- Fix installation conflicts caused by disposable Kubernetes builders generating a different debug signing key for each APK.
+- Distribute the debug app as `dev.omp.mobile.debug`, labeled **OMP Mobile Debug**, so it installs alongside the legacy `dev.omp.mobile` app without uninstalling it. Pair again in the new app; legacy app data is not migrated or removed.
+- Persist the new signing key in the immutable `debug-keystore` Secret in namespace `omp-mobile-signing`, with a private backup at `~/.config/omp-mobile/signing/debug.keystore`. Do not delete that namespace during build cleanup or regenerate its key.
+- Pin the public signing-certificate fingerprint in `signing/debug-certificate.sha256`. Gradle rejects missing or unexpected signing keys instead of generating a replacement.
+- Use `bash scripts/build-debug-kube.sh` for builds. It mounts the persistent key, checks the packaged signer and application ID, updates the APK/checksum, and cleans up only the disposable build namespace. Private keystores are ignored by Git and excluded from source archives.
+
+Verification: build 7 and 98 JVM tests passed in Kubernetes. Missing-key and wrong-key negative configuration checks passed. A fresh verifier pod recovered the same pinned signer from the persistent Secret. On an isolated Android API 30 emulator, both packages installed together; reinstalling the new APK succeeded, and private test-data markers in both packages remained intact.
+
 ## 0.1.0 — build 5
 
 - Redesign the chat composer as one rounded row: image picker, multiline editor, send, and the existing stop control.

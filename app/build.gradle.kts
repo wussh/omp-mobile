@@ -1,3 +1,6 @@
+import java.security.KeyStore
+import java.security.MessageDigest
+import java.util.HexFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -17,13 +20,43 @@ android {
         minSdk = 26
         targetSdk = 37
         // Increment for each APK build, not for each source edit.
-        versionCode = 5
+        versionCode = 7
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        getByName("debug") {
+            val persistentKeystore = file(
+                providers.environmentVariable("OMP_MOBILE_DEBUG_KEYSTORE").getOrElse(
+                    "${System.getProperty("user.home")}/.config/omp-mobile/signing/debug.keystore",
+                ),
+            )
+            check(persistentKeystore.isFile) {
+                "Persistent debug keystore missing. Use scripts/build-debug-kube.sh; do not generate a replacement key."
+            }
+            val keystore = KeyStore.getInstance("JKS").apply {
+                persistentKeystore.inputStream().use { load(it, "android".toCharArray()) }
+            }
+            val certificate = checkNotNull(keystore.getCertificate("androiddebugkey")) {
+                "Persistent debug keystore has no androiddebugkey certificate."
+            }
+            val fingerprint = HexFormat.of().formatHex(
+                MessageDigest.getInstance("SHA-256").digest(certificate.encoded),
+            )
+            check(fingerprint == rootProject.file("signing/debug-certificate.sha256").readText().trim()) {
+                "Debug signing certificate mismatch. Restore the persistent keystore; do not rotate the key."
+            }
+            storeFile = persistentKeystore
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         debug {
+            applicationIdSuffix = ".debug"
             isMinifyEnabled = false
         }
         release {

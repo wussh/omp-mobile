@@ -1,0 +1,33 @@
+{
+  "apk": {
+    "name": "omp-mobile-0.1.0-debug.apk",
+    "versionCode": 7,
+    "versionName": "0.1.0",
+    "applicationId": "dev.omp.mobile.debug",
+    "label": "OMP Mobile Debug",
+    "sha256": "0cf95c57060f2f8761ef4398a60ba62b34b095647f81045bf0499a47163c3d83",
+    "signerCertificateSha256": "33af3bb4d038bd0665ca69087d5b44254fbe2f0c970e4c07eff899f6cf6e0be4",
+    "apksignerVerify": true,
+    "zipIntegrity": true
+  },
+  "jvmTests": {"tests": 98, "failures": 0, "errors": 0, "skipped": 0},
+  "signingChecks": {
+    "missingKeystoreRejectedWithoutRegeneration": true,
+    "unexpectedCertificateRejected": true,
+    "freshPodSecretCertificateMatchesPin": true,
+    "canonicalSecretImmutable": true
+  },
+  "androidPackageManagerSmoke": {
+    "api": 30,
+    "device": "isolated AOSP ATD emulator in tbs-dev",
+    "legacyPackage": "dev.omp.mobile",
+    "newPackage": "dev.omp.mobile.debug",
+    "legacyInstallSucceeded": true,
+    "sideBySideInstallSucceeded": true,
+    "reinstallNewApkSucceeded": true,
+    "legacyPrivateTestMarkerPreserved": true,
+    "newPrivateTestMarkerPreserved": true,
+    "uninstallPerformed": false
+  },
+  "limits": "PackageManager smoke used private fixture markers, not user credentials or user data. No physical-device installation or visual rendering is claimed."
+}
