@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -62,7 +61,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -288,7 +286,6 @@ fun ChatScreen(
                 onRemoveImage = viewModel::removeImage,
                 onSend = viewModel::send,
                 onInterrupt = viewModel::interrupt,
-                onOpenDetails = openDetails,
             )
         }
 
@@ -389,7 +386,6 @@ private fun Composer(
     onRemoveImage: (String) -> Unit,
     onSend: () -> Unit,
     onInterrupt: () -> Unit,
-    onOpenDetails: () -> Unit,
 ) {
     val busy = session.replica.working || session.replica.state?.isStreaming == true
     val imagePicker = rememberLauncherForActivityResult(
@@ -516,18 +512,6 @@ private fun Composer(
         }
         if (interruptPending) {
             Text("Waiting for the host to stop…", style = MaterialTheme.typography.labelSmall)
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End,
-        ) {
-            TextButton(
-                onClick = onOpenDetails,
-                modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .testTag(ChatHeaderTags.ComposerDetails),
-            ) { Text("Details") }
         }
     }
 }

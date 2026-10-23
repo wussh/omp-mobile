@@ -49,7 +49,6 @@ internal object ChatHeaderTags {
     const val Metadata = "chat_header_metadata"
     const val DetailsDialog = "chat_header_details_dialog"
     const val DetailsClose = "chat_header_details_close"
-    const val ComposerDetails = "chat_composer_details"
 }
 
 /**
